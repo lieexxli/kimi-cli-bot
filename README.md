@@ -2,9 +2,9 @@
 
 把 [kimi-cli](https://github.com/MoonshotAI/kimi-cli) 接入 Telegram，让你在手机上也能用完整的 AI Agent 能力：执行命令、读写文件、联网搜索、识别图片……和在终端里用没有区别。
 
-底层模型使用 Google Gemini，API 免费额度够日常使用。
+底层模型使用 Google Gemini。
 
-> 原版 kimi-cli 文档见 [UPSTREAM_README.md](UPSTREAM_README.md)
+> 原版 kimi-cli 文档见 [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli)
 
 ---
 
