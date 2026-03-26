@@ -94,8 +94,17 @@ class GoogleGenAI:
         self._model = model
         self._stream = stream
         self._base_url = base_url
+        # Force httpx for async requests to avoid potential conflicts with other
+        # aiohttp-based libraries on the same event loop.
+        # When httpx_async_client is set, the SDK skips aiohttp entirely.
+        import httpx as _httpx
+
+        http_options = HttpOptions(
+            base_url=base_url or None,
+            httpx_async_client=_httpx.AsyncClient(),
+        )
         self._client: genai_client.Client = genai.Client(
-            http_options=HttpOptions(base_url=base_url),
+            http_options=http_options,
             api_key=api_key,
             vertexai=vertexai,
             **client_kwargs,
@@ -391,14 +400,11 @@ def _image_url_part_to_google_genai(part: ImageURLPart) -> Part:
         data_bytes = base64.b64decode(data_b64)
         return Part.from_bytes(data=data_bytes, mime_type=media_type)
     else:
-        # For regular URLs, try to download the image and convert to bytes
+        # Pass URL directly to Gemini — it fetches server-side, no local download needed
         mime_type, _ = mimetypes.guess_type(url)
         if not mime_type or not mime_type.startswith("image/"):
-            # Default to image/png if we can't detect or it's not an image type
-            mime_type = "image/png"
-        response = httpx.get(url).raise_for_status()
-        data_bytes = response.content
-        return Part.from_bytes(data=data_bytes, mime_type=mime_type)
+            mime_type = "image/jpeg"
+        return Part.from_uri(file_uri=url, mime_type=mime_type)
 
 
 def _audio_url_part_to_google_genai(part: AudioURLPart) -> Part:

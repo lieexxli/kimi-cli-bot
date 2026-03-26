@@ -1,174 +1,99 @@
-# Kimi Code CLI
+# kimi-cli-bot
 
-[![Commit Activity](https://img.shields.io/github/commit-activity/w/MoonshotAI/kimi-cli)](https://github.com/MoonshotAI/kimi-cli/graphs/commit-activity)
-[![Checks](https://img.shields.io/github/check-runs/MoonshotAI/kimi-cli/main)](https://github.com/MoonshotAI/kimi-cli/actions)
-[![Version](https://img.shields.io/pypi/v/kimi-cli)](https://pypi.org/project/kimi-cli/)
-[![Downloads](https://img.shields.io/pypi/dw/kimi-cli)](https://pypistats.org/packages/kimi-cli)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/MoonshotAI/kimi-cli)
+在 [kimi-cli](https://github.com/MoonshotAI/kimi-cli) 基础上增加 Telegram Bot 接入，将 CLI Agent 的能力搬到手机上。
 
-[Kimi Code](https://www.kimi.com/code/) | [Documentation](https://moonshotai.github.io/kimi-cli/en/) | [文档](https://moonshotai.github.io/kimi-cli/zh/)
+> 原版 kimi-cli 文档见 [UPSTREAM_README.md](UPSTREAM_README.md)
 
-Kimi Code CLI is an AI agent that runs in the terminal, helping you complete software development tasks and terminal operations. It can read and edit code, execute shell commands, search and fetch web pages, and autonomously plan and adjust actions during execution.
+---
 
-## Getting Started
+## 相比原版 kimi-cli 的增量
 
-See [Getting Started](https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html) for how to install and start using Kimi Code CLI.
+### 用户视角
 
-## Key Features
+- 通过 Telegram 与 AI Agent 交互
+- 多用户共用一个 Bot，会话互相隔离
+- Agent 可主动推送消息通知（长任务完成后无需轮询）
 
-### Shell command mode
+### 技术视角
 
-Kimi Code CLI is not only a coding agent, but also a shell. You can switch the shell command mode by pressing `Ctrl-X`. In this mode, you can directly run shell commands without leaving Kimi Code CLI.
+**新增：Telegram Bot 接入层**
+- `--im telegram` 启动模式，长轮询，无需公网地址
+- `IMServer` 负责多用户路由，每个 `chat_id` 对应独立的 `KimiCLI` 实例和会话目录
+- `SendIMNotification` 工具：让 Agent 可以主动给用户发消息（不等用户发起）
 
-![](./docs/media/shell-mode.gif)
+**新增：GeminiSearch 工具**
+- 单独发起一次 Gemini API 调用，开启 Google Search grounding，从返回的 `grounding_chunks` 中提取 URL、标题、摘要，封装成标准 kimi-cli 工具结果
 
-> [!NOTE]
-> Built-in shell commands like `cd` are not supported yet.
+**Gemini 适配修复**
+- 原版 kimi-cli 要求所有 provider 必须配置 `base_url`，Gemini 不需要——修复了这个判断
+- google-genai SDK 默认用 aiohttp 做异步请求，在 Windows 上与其他 aiohttp 组件存在事件循环冲突——改为强制使用 httpx
 
-### VS Code extension
+**其他**
+- 支持 `.env` 文件（`python-dotenv`）
 
-Kimi Code CLI can be integrated with [Visual Studio Code](https://code.visualstudio.com/) via the [Kimi Code VS Code Extension](https://marketplace.visualstudio.com/items?itemName=moonshot-ai.kimi-code).
+---
 
-![VS Code Extension](./docs/media/vscode.png)
+## 快速开始
 
-### IDE integration via ACP
+### 1. 安装依赖
 
-Kimi Code CLI supports [Agent Client Protocol] out of the box. You can use it together with any ACP-compatible editor or IDE.
-
-[Agent Client Protocol]: https://github.com/agentclientprotocol/agent-client-protocol
-
-To use Kimi Code CLI with ACP clients, make sure to run Kimi Code CLI in the terminal and send `/login` to complete the login first. Then, you can configure your ACP client to start Kimi Code CLI as an ACP agent server with command `kimi acp`.
-
-For example, to use Kimi Code CLI with [Zed](https://zed.dev/) or [JetBrains](https://blog.jetbrains.com/ai/2025/12/bring-your-own-ai-agent-to-jetbrains-ides/), add the following configuration to your `~/.config/zed/settings.json` or `~/.jetbrains/acp.json` file:
-
-```json
-{
-  "agent_servers": {
-    "Kimi Code CLI": {
-      "type": "custom",
-      "command": "kimi",
-      "args": ["acp"],
-      "env": {}
-    }
-  }
-}
+```bash
+git clone https://github.com/lieexxli/kimi-cli-bot.git
+cd kimi-cli-bot
+uv sync --extra im
 ```
 
-Then you can create Kimi Code CLI threads in IDE's agent panel.
+### 2. 配置 LLM
 
-![](./docs/media/acp-integration.gif)
-
-### Zsh integration
-
-You can use Kimi Code CLI together with Zsh, to empower your shell experience with AI agent capabilities.
-
-Install the [zsh-kimi-cli](https://github.com/MoonshotAI/zsh-kimi-cli) plugin via:
-
-```sh
-git clone https://github.com/MoonshotAI/zsh-kimi-cli.git \
-  ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/kimi-cli
+```bash
+cp kimi.toml.example kimi.toml
 ```
 
-> [!NOTE]
-> If you are using a plugin manager other than Oh My Zsh, you may need to refer to the plugin's README for installation instructions.
+编辑 `kimi.toml`，填入 [Google Gemini API Key](https://aistudio.google.com/apikey)：
 
-Then add `kimi-cli` to your Zsh plugin list in `~/.zshrc`:
+```toml
+default_model = "gemini/gemini-2.5-flash-lite"
 
-```sh
-plugins=(... kimi-cli)
+[models."gemini/gemini-2.5-flash-lite"]
+provider = "gemini"
+model = "gemini-2.5-flash-lite"
+max_context_size = 1048576
+capabilities = ["image_in", "thinking", "video_in"]
+
+[providers.gemini]
+type = "gemini"
+api_key = "YOUR_GEMINI_API_KEY"
 ```
 
-After restarting Zsh, you can switch to agent mode by pressing `Ctrl-X`.
+> `kimi.toml` 已加入 `.gitignore`，不会被提交。
 
-### MCP support
+### 3. 配置 Telegram Bot Token
 
-Kimi Code CLI supports MCP (Model Context Protocol) tools.
+通过 [@BotFather](https://t.me/BotFather) 创建 Bot，在项目目录创建 `.env`：
 
-**`kimi mcp` sub-command group**
-
-You can manage MCP servers with `kimi mcp` sub-command group. For example:
-
-```sh
-# Add streamable HTTP server:
-kimi mcp add --transport http context7 https://mcp.context7.com/mcp --header "CONTEXT7_API_KEY: ctx7sk-your-key"
-
-# Add streamable HTTP server with OAuth authorization:
-kimi mcp add --transport http --auth oauth linear https://mcp.linear.app/mcp
-
-# Add stdio server:
-kimi mcp add --transport stdio chrome-devtools -- npx chrome-devtools-mcp@latest
-
-# List added MCP servers:
-kimi mcp list
-
-# Remove an MCP server:
-kimi mcp remove chrome-devtools
-
-# Authorize an MCP server:
-kimi mcp auth linear
+```env
+TELEGRAM_BOT_TOKEN=xxxxxxxxxx:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-**Ad-hoc MCP configuration**
+### 4. 启动
 
-Kimi Code CLI also supports ad-hoc MCP server configuration via CLI option.
-
-Given an MCP config file in the well-known MCP config format like the following:
-
-```json
-{
-  "mcpServers": {
-    "context7": {
-      "url": "https://mcp.context7.com/mcp",
-      "headers": {
-        "CONTEXT7_API_KEY": "YOUR_API_KEY"
-      }
-    },
-    "chrome-devtools": {
-      "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"]
-    }
-  }
-}
+```bash
+uv run kimi --config-file kimi.toml --im telegram --work-dir .
 ```
 
-Run `kimi` with `--mcp-config-file` option to connect to the specified MCP servers:
+---
 
-```sh
-kimi --mcp-config-file /path/to/mcp.json
-```
+## 参数说明
 
-### More
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--im telegram` | 启动 Telegram Bot 模式 | — |
+| `--im-token` | Bot Token（或 `TELEGRAM_BOT_TOKEN` 环境变量） | — |
+| `--im-model` | 覆盖 kimi.toml 的默认模型 | kimi.toml 默认 |
+| `--im-allow` | chat_id 白名单，可多次指定 | 允许所有 |
+| `--work-dir` | 工作目录，会话存于 `<work-dir>/sessions/<chat_id>/` | `.` |
+| `--config-file` | 配置文件路径 | 全局配置 |
 
-See more features in the [Documentation](https://moonshotai.github.io/kimi-cli/en/).
+建议通过 `--im-allow` 限制可用用户，避免 Bot 被陌生人使用。
 
-## Development
-
-To develop Kimi Code CLI, run:
-
-```sh
-git clone https://github.com/MoonshotAI/kimi-cli.git
-cd kimi-cli
-
-make prepare  # prepare the development environment
-```
-
-Then you can start working on Kimi Code CLI.
-
-Refer to the following commands after you make changes:
-
-```sh
-uv run kimi  # run Kimi Code CLI
-
-make format  # format code
-make check  # run linting and type checking
-make test  # run tests
-make test-kimi-cli  # run Kimi Code CLI tests only
-make test-kosong  # run kosong tests only
-make test-pykaos  # run pykaos tests only
-make build-web  # build the web UI and sync it into the package (requires Node.js/npm)
-make build  # build python packages
-make build-bin  # build standalone binary
-make help  # show all make targets
-```
-
-Note: `make build` and `make build-bin` automatically run `make build-web` to embed the web UI.
+> IM 模式下所有工具调用自动批准（等同于 `--yolo`）。

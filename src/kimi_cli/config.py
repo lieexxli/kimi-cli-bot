@@ -169,6 +169,31 @@ class MCPConfig(BaseModel):
     )
 
 
+class IMConfig(BaseModel):
+    """Instant Messaging bot configuration."""
+
+    platform: str = Field(default="telegram", description="IM platform: telegram")
+    """IM platform type."""
+    token: str = Field(default="", description="Bot token")
+    """Bot token for the IM platform."""
+    webhook_url: str | None = Field(default=None, description="Webhook URL (optional)")
+    """Webhook URL. If None, uses long polling."""
+    webhook_port: int = Field(default=8443, description="Local port for webhook server")
+    """Local port to listen on for webhook events."""
+    allowed_chat_ids: list[str] = Field(
+        default_factory=list,
+        description="Allowed chat IDs whitelist (empty = allow all)",
+    )
+    """Whitelist of chat/group IDs allowed to use the bot. Empty list means allow all."""
+    work_dir: str = Field(default=".", description="Working directory for AI agent sessions")
+    """Working directory for AI agent sessions (relative to CWD or absolute)."""
+    model_name: str | None = Field(
+        default=None,
+        description="LLM model to use for IM sessions (overrides config default)",
+    )
+    """LLM model name for IM sessions. None means use the default from config."""
+
+
 class Config(BaseModel):
     """Main configuration structure."""
 

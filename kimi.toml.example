@@ -1,0 +1,12 @@
+default_model = "gemini/gemini-2.5-flash-lite"
+
+[models."gemini/gemini-2.5-flash-lite"]
+provider = "gemini"
+model = "gemini-2.5-flash-lite"
+max_context_size = 1048576
+capabilities = ["image_in", "thinking", "video_in"]
+
+[providers.gemini]
+type = "gemini"
+base_url = "" # keep empty
+api_key = "YOUR_GEMINI_API_KEY"
