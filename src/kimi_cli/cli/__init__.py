@@ -34,15 +34,13 @@ LLM friendly version: https://moonshotai.github.io/kimi-cli/llms.txt""",
     help="Kimi, your next CLI agent.",
 )
 
-UIMode = Literal["shell", "print", "acp", "wire"]
+UIMode = Literal["shell", "print", "acp", "wire", "im"]
 
 
 class ExitCode:
     SUCCESS = 0
     FAILURE = 1
     RETRYABLE = 75  # EX_TEMPFAIL from sysexits.h
-
-
 InputFormat = Literal["text", "stream-json"]
 OutputFormat = Literal["text", "stream-json"]
 
@@ -204,6 +202,41 @@ def kimi(
             help="Run as Wire server (experimental).",
         ),
     ] = False,
+    im_platform: Annotated[
+        str | None,
+        typer.Option(
+            "--im",
+            help="Run as IM bot. Supported platforms: telegram.",
+        ),
+    ] = None,
+    im_token: Annotated[
+        str | None,
+        typer.Option(
+            "--im-token",
+            help=("Bot token for IM platform. Alternatively set TELEGRAM_BOT_TOKEN env var."),
+        ),
+    ] = None,
+    im_webhook_port: Annotated[
+        int,
+        typer.Option(
+            "--im-webhook-port",
+            help="Local port for IM webhook server (default: 8443).",
+        ),
+    ] = 8443,
+    im_allowed_chat_ids: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--im-allow",
+            help="Allow list of chat/user IDs for the IM bot. Can be specified multiple times.",
+        ),
+    ] = None,
+    im_model: Annotated[
+        str | None,
+        typer.Option(
+            "--im-model",
+            help="LLM model for IM sessions. Default: same as --model.",
+        ),
+    ] = None,
     input_format: Annotated[
         InputFormat | None,
         typer.Option(
@@ -386,6 +419,7 @@ def kimi(
             "--print": print_mode,
             "--acp": acp_mode,
             "--wire": wire_mode,
+            "--im": im_platform is not None,
         },
         {
             "--agent": agent is not None,
@@ -422,6 +456,8 @@ def kimi(
         ui = "acp"
     elif wire_mode:
         ui = "wire"
+    elif im_platform is not None:
+        ui = "im"
 
     if prompt is not None:
         prompt = prompt.strip()
@@ -582,6 +618,21 @@ def kimi(
                         if prompt is not None:
                             logger.warning("Wire server ignores prompt argument")
                         await instance.run_wire_stdio()
+                        exit_code = ExitCode.SUCCESS
+                    case "im":
+                        if prompt is not None:
+                            logger.warning("IM bot ignores prompt argument")
+                        from kimi_cli.config import IMConfig
+
+                        _im_cfg = IMConfig(
+                            platform=im_platform or "telegram",
+                            token=im_token or "",
+                            webhook_port=im_webhook_port,
+                            allowed_chat_ids=list(im_allowed_chat_ids or []),
+                            work_dir=str(local_work_dir or "."),
+                            model_name=im_model or model_name,
+                        )
+                        await instance.run_im(im_platform or "telegram", _im_cfg)
                         exit_code = ExitCode.SUCCESS
             except Reload as e:
                 preserve_background_tasks = True

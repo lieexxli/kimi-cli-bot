@@ -531,3 +531,28 @@ class KimiCLI:
         async with self._env():
             server = WireServer(self._soul)
             await server.serve()
+
+    async def run_im(self, platform: str, im_config: Any) -> None:
+        """Run kimi-cli as an IM bot (Telegram).
+
+        Args:
+            platform: IM platform name ("telegram").
+            im_config: IMConfig instance with bot token and settings.
+        """
+        from kimi_cli.ui.im import IMServer
+
+        platform = platform.lower()
+        if platform == "telegram":
+            from kimi_cli.ui.im.adapters.telegram import TelegramAdapter
+
+            adapter = TelegramAdapter(im_config)
+        else:
+            raise ValueError(f"Unknown IM platform: {platform!r}. Supported: telegram")
+
+        server = IMServer(
+            adapter=adapter,
+            im_config=im_config,
+            config=self._runtime.config,
+        )
+        async with self._env():
+            await server.run()

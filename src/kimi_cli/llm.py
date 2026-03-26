@@ -111,9 +111,12 @@ def create_llm(
     session_id: str | None = None,
     oauth: OAuthManager | None = None,
 ) -> LLM | None:
-    if provider.type not in {"_echo", "_scripted_echo"} and (
-        not provider.base_url or not model.model
-    ):
+    # gemini/vertexai SDKs use api_key directly and don't require base_url
+    _no_base_url_types = {"_echo", "_scripted_echo", "gemini", "google_genai", "vertexai"}
+    requires_base_url = provider.type not in _no_base_url_types
+    if requires_base_url and (not provider.base_url or not model.model):
+        return None
+    if not requires_base_url and not model.model:
         return None
 
     resolved_api_key = (
