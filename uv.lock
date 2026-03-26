@@ -1220,6 +1220,7 @@ source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
     { name = "aiofiles" },
+    { name = "aiogram" },
     { name = "aiohttp" },
     { name = "batrachian-toad", marker = "python_full_version >= '3.14'" },
     { name = "fastapi" },
@@ -1274,6 +1275,7 @@ dev = [
 requires-dist = [
     { name = "agent-client-protocol", specifier = "==0.8.0" },
     { name = "aiofiles", specifier = ">=24.0,<26.0" },
+    { name = "aiogram", specifier = ">=3.0,<4.0" },
     { name = "aiogram", marker = "extra == 'im'", specifier = ">=3.0,<4.0" },
     { name = "aiogram", marker = "extra == 'im-telegram'", specifier = ">=3.0,<4.0" },
     { name = "aiohttp", specifier = "==3.13.3" },

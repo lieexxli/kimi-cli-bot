@@ -1,55 +1,48 @@
 # kimi-cli-bot
 
-在 [kimi-cli](https://github.com/MoonshotAI/kimi-cli) 基础上增加 Telegram Bot 接入，将 CLI Agent 的能力搬到手机上。
+把 [kimi-cli](https://github.com/MoonshotAI/kimi-cli) 接入 Telegram，让你在手机上也能用完整的 AI Agent 能力：执行命令、读写文件、联网搜索、识别图片……和在终端里用没有区别。
+
+底层模型使用 Google Gemini，API 免费额度够日常使用。
 
 > 原版 kimi-cli 文档见 [UPSTREAM_README.md](UPSTREAM_README.md)
 
 ---
 
-## 相比原版 kimi-cli 的增量
+## 能做什么
 
-### 用户视角
+kimi-cli 原有的工具在 Telegram 里全部可用：
 
-- 通过 Telegram 与 AI Agent 交互
-- 多用户共用一个 Bot，会话互相隔离
-- Agent 可主动推送消息通知（长任务完成后无需轮询）
+- **Shell 命令**：让 AI 帮你跑脚本、查日志、管进程
+- **文件读写**：读代码、改配置、生成文件
+- **联网搜索**：基于 Gemini Google Search grounding
+- **图片识别**：直接发图片，或者粘贴图片链接
+- **长任务**：AI 完成后主动发消息通知你，不用守着等
 
-### 技术视角
-
-**新增：Telegram Bot 接入层**
-- `--im telegram` 启动模式，长轮询，无需公网地址
-- `IMServer` 负责多用户路由，每个 `chat_id` 对应独立的 `KimiCLI` 实例和会话目录
-- `SendIMNotification` 工具：让 Agent 可以主动给用户发消息（不等用户发起）
-
-**新增：GeminiSearch 工具**
-- 单独发起一次 Gemini API 调用，开启 Google Search grounding，从返回的 `grounding_chunks` 中提取 URL、标题、摘要，封装成标准 kimi-cli 工具结果
-
-**Gemini 适配修复**
-- 原版 kimi-cli 要求所有 provider 必须配置 `base_url`，Gemini 不需要——修复了这个判断
-- google-genai SDK 默认用 aiohttp 做异步请求，在 Windows 上与其他 aiohttp 组件存在事件循环冲突——改为强制使用 httpx
-
-**其他**
-- 支持 `.env` 文件（`python-dotenv`）
+多个用户可以共用同一个 Bot，会话互相隔离，重启后历史对话自动续接。
 
 ---
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 克隆并安装
 
 ```bash
 git clone https://github.com/lieexxli/kimi-cli-bot.git
 cd kimi-cli-bot
-uv sync --extra im
+uv sync
 ```
 
-### 2. 配置 LLM
+### 2. 获取 Gemini API Key
+
+前往 [Google AI Studio](https://aistudio.google.com/apikey) 创建一个免费的 API Key。
+
+### 3. 配置
 
 ```bash
 cp kimi.toml.example kimi.toml
 ```
 
-编辑 `kimi.toml`，填入 [Google Gemini API Key](https://aistudio.google.com/apikey)：
+编辑 `kimi.toml`，填入 API Key：
 
 ```toml
 default_model = "gemini/gemini-2.5-flash-lite"
@@ -65,15 +58,13 @@ type = "gemini"
 api_key = "YOUR_GEMINI_API_KEY"
 ```
 
-> `kimi.toml` 已加入 `.gitignore`，不会被提交。
-
-### 3. 配置 Telegram Bot Token
-
-通过 [@BotFather](https://t.me/BotFather) 创建 Bot，在项目目录创建 `.env`：
+通过 [@BotFather](https://t.me/BotFather) 创建 Telegram Bot，在项目目录创建 `.env`：
 
 ```env
 TELEGRAM_BOT_TOKEN=xxxxxxxxxx:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
+
+> `kimi.toml` 和 `.env` 已加入 `.gitignore`，不会被提交。
 
 ### 4. 启动
 
@@ -94,6 +85,26 @@ uv run kimi --config-file kimi.toml --im telegram --work-dir .
 | `--work-dir` | 工作目录，会话存于 `<work-dir>/sessions/<chat_id>/` | `.` |
 | `--config-file` | 配置文件路径 | 全局配置 |
 
-建议通过 `--im-allow` 限制可用用户，避免 Bot 被陌生人使用。
+**建议配置 `--im-allow`**，避免 Bot 被陌生人使用：
 
-> IM 模式下所有工具调用自动批准（等同于 `--yolo`）。
+```bash
+uv run kimi --config-file kimi.toml --im telegram --work-dir . --im-allow 123456789
+```
+
+你的 Telegram user ID 可以通过 [@userinfobot](https://t.me/userinfobot) 查询。
+
+---
+
+## 常用命令
+
+| 命令 | 说明 |
+|------|------|
+| `/new` | 开启新对话（清空上下文） |
+
+---
+
+## 注意事项
+
+- 使用长轮询，无需公网地址
+- IM 模式下工具调用全部自动批准，适合个人使用
+- 会话历史存储在 `<work-dir>/sessions/<chat_id>/` 下，重启后自动续接
