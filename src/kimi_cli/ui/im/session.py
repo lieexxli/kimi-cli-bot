@@ -139,6 +139,8 @@ class IMSession:
         self._turn_running = False
         # Current turn's cancel event; None when no turn is running
         self._current_cancel: asyncio.Event | None = None
+        # Keep a reference to the running turn task to prevent GC and surface exceptions
+        self._current_task: asyncio.Task | None = None
         # Loop detection: tracks consecutive calls to the same tool
         self._loop_last_tool: str | None = None
         self._loop_consecutive: int = 0
@@ -168,7 +170,23 @@ class IMSession:
 
         await self._message_queue.put(text)
         if not self._turn_running:
-            asyncio.create_task(self._run_next_turn())
+            self._schedule_next_turn()
+
+    def _schedule_next_turn(self) -> None:
+        """Create a task for _run_next_turn and keep a reference to surface exceptions."""
+        task = asyncio.create_task(self._run_next_turn())
+        self._current_task = task
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._current_task = None
+            if not t.cancelled() and (exc := t.exception()) is not None:
+                logger.error(
+                    "Unhandled exception in IM turn task for chat_id={chat_id}",
+                    chat_id=self._chat_id,
+                    exc_info=exc,
+                )
+
+        task.add_done_callback(_on_done)
 
     async def cancel_current_turn(self) -> None:
         """Cancel the currently running turn, if any."""
@@ -209,9 +227,10 @@ class IMSession:
             )
         finally:
             self._turn_running = False
+            self._current_task = None
             # If more messages are queued, process the next one
             if not self._message_queue.empty():
-                asyncio.create_task(self._run_next_turn())
+                self._schedule_next_turn()
 
     async def _get_kimi(self) -> KimiCLI:
         """Lazily create or return the existing KimiCLI instance for this session."""
@@ -465,6 +484,7 @@ class IMSession:
                     req.resolve("reject", feedback=reason or "用户拒绝")
             except TimeoutError:
                 timed_out = True
+                self._server.unregister_callback_handler(msg_id)
                 await self._server.edit_chat_message(
                     self._chat_id,
                     msg_id,

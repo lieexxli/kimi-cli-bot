@@ -50,6 +50,11 @@ class IMAdapter(ABC):
         Default implementation is a no-op; override in adapters that support inline keyboards.
         """
 
+    def unregister_callback_handler(self, message_id: int) -> None:  # noqa: B027
+        """Remove a pending callback handler without invoking it (e.g. after timeout).
+        Default implementation is a no-op; override in adapters that support inline keyboards.
+        """
+
     async def _dispatch_message(
         self, chat_id: str, user_id: str, text: UserInput, message_id: int | None = None
     ) -> None:
@@ -125,16 +130,46 @@ class IMServer:
         return self._sessions.get(chat_id)
 
     def active_chat_ids(self) -> list[str]:
-        """Return the list of currently active chat IDs."""
-        return list(self._sessions.keys())
+        """Return chat IDs that currently have a turn in progress."""
+        return [cid for cid, s in self._sessions.items() if s._turn_running]
 
     async def send_to_chat(self, chat_id: str, text: str) -> int | None:
-        """Send a message to a chat (SendIMNotification). Returns message_id if available."""
-        return await self._adapter.send_message(chat_id, text)
+        """Send a message to a chat (SendIMNotification). Returns message_id if available.
+
+        Long messages are automatically split to stay within IM platform limits.
+        """
+        _MAX = 4000
+        if len(text) <= _MAX:
+            return await self._adapter.send_message(chat_id, text)
+        # Split on newlines where possible, hard-split oversized lines as last resort
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+        for line in text.splitlines(keepends=True):
+            if current_len + len(line) > _MAX and current:
+                chunks.append("".join(current))
+                current = []
+                current_len = 0
+            if len(line) > _MAX:
+                for i in range(0, len(line), _MAX):
+                    chunks.append(line[i : i + _MAX])
+            else:
+                current.append(line)
+                current_len += len(line)
+        if current:
+            chunks.append("".join(current))
+        last_id: int | None = None
+        for chunk in chunks:
+            last_id = await self._adapter.send_message(chat_id, chunk)
+        return last_id
 
     def register_callback_handler(self, message_id: int, handler: CallbackHandler) -> None:
         """Delegate to adapter."""
         self._adapter.register_callback_handler(message_id, handler)
+
+    def unregister_callback_handler(self, message_id: int) -> None:
+        """Remove a pending callback handler (e.g. after approval timeout)."""
+        self._adapter.unregister_callback_handler(message_id)
 
     async def edit_chat_message(
         self, chat_id: str, message_id: int, text: str, remove_keyboard: bool = False
@@ -154,7 +189,7 @@ class IMServer:
                 platform=self._im_config.platform,
             )
             # Block until cancelled
-            await asyncio.get_event_loop().create_future()
+            await asyncio.get_running_loop().create_future()
         except asyncio.CancelledError:
             logger.info("IM server stopping...")
         finally:
