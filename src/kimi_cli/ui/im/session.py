@@ -232,9 +232,16 @@ class IMSession:
             yolo = effective_mode == "full-auto"
 
             if effective_mode == "auto":
-                # Pre-approve low-risk actions; shell/outside-workdir still require approval.
-                _LOW_RISK_ACTIONS = {"read file", "edit file", "stop background task"}
-                session.state.approval.auto_approve_actions |= _LOW_RISK_ACTIONS
+                # Auto-approve everything except edits outside the working directory.
+                # Shell commands have no per-command risk classification, so approve all.
+                _AUTO_ACTIONS = {
+                    "read file",
+                    "edit file",
+                    "stop background task",
+                    "run command",
+                    "run background command",
+                }
+                session.state.approval.auto_approve_actions |= _AUTO_ACTIONS
                 session.save_state()
 
             self._kimi = await KimiCLI.create(
