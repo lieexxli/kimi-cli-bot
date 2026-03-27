@@ -390,10 +390,17 @@ class IMSession:
 
         if msg_id is not None:
             # Wait for button press via callback
-            loop = asyncio.get_event_loop()
-            result_future: asyncio.Future[tuple[str, str]] = loop.create_future()
+            result_future: asyncio.Future[tuple[str, str]] = (
+                asyncio.get_running_loop().create_future()
+            )
+            timed_out = False
 
             async def on_button(callback_query_id: str, data: str) -> None:
+                if timed_out:
+                    # Turn already rejected; ack the late press with an expired notice
+                    if isinstance(adapter, TelegramAdapter):
+                        await adapter.answer_callback_query(callback_query_id, "已过期，请重新操作")
+                    return
                 if not result_future.done():
                     result_future.set_result((callback_query_id, data))
 
@@ -419,6 +426,7 @@ class IMSession:
                     reason = await self._wait_for_user_reply(timeout=60.0)
                     req.resolve("reject", feedback=reason or "用户拒绝")
             except TimeoutError:
+                timed_out = True
                 await self._server.edit_chat_message(
                     self._chat_id,
                     msg_id,
