@@ -16,26 +16,13 @@ if TYPE_CHECKING:
 HELP_TEXT = """\
 🤖 Kimi Code AI Assistant
 
-Bot 管理命令：
-  /start   — 显示本帮助
-  /help    — 显示本帮助
+Bot 命令：
   /cancel  — 中止当前正在运行的 AI 任务
   /status  — 显示 Bot 状态（仅管理员）
-
-AI 对话命令（直接发消息即可）：
-  /clear   — 清除对话历史，开始新会话
-  /yolo    — 切换 yolo（全自动）模式
-  /compact — 手动压缩上下文
-  /plan    — 进入/退出 Plan 模式
-  /export  — 导出当前会话
 """
 
 
 async def handle_start(chat_id: str, server: IMServer) -> None:
-    await server.send_to_chat(chat_id, HELP_TEXT)
-
-
-async def handle_help(chat_id: str, server: IMServer) -> None:
     await server.send_to_chat(chat_id, HELP_TEXT)
 
 

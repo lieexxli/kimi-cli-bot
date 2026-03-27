@@ -72,7 +72,6 @@ class TelegramAdapter(IMAdapter):
         from kimi_cli.ui.im import get_current_im_server
         from kimi_cli.ui.im.commands import (
             handle_cancel,
-            handle_help,
             handle_start,
             handle_status,
         )
@@ -87,13 +86,6 @@ class TelegramAdapter(IMAdapter):
                 await handle_start(chat_id, server)
             else:
                 await message.answer("Hello! I'm Kimi Code AI assistant.")
-
-        @self._dp.message(Command("help"))
-        async def on_help(message: Message) -> None:  # type: ignore[reportUnusedFunction]
-            chat_id = str(message.chat.id)
-            server = get_current_im_server()
-            if server:
-                await handle_help(chat_id, server)
 
         @self._dp.message(Command("cancel"))
         async def on_cancel(message: Message) -> None:  # type: ignore[reportUnusedFunction]
