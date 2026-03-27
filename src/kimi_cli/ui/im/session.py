@@ -257,6 +257,10 @@ class IMSession:
 
     async def _run_turn(self, user_input: UserInput) -> None:
         """Run one AI turn and send the response back via IM."""
+        # ! prefix: run shell command directly, bypass AI
+        if isinstance(user_input, str) and user_input.startswith("!"):
+            await self._run_shell_passthrough(user_input[1:].strip())
+            return
         # /new is an IM-friendly alias for /clear (text only)
         if isinstance(user_input, str) and user_input.strip().lower() in ("/new", "/new "):
             user_input = "/clear"
@@ -539,6 +543,31 @@ class IMSession:
             logger.exception(
                 "Failed to edit stream message in chat_id={chat_id}", chat_id=self._chat_id
             )
+
+    async def _run_shell_passthrough(self, command: str) -> None:
+        """Run a shell command directly and send output back, bypassing AI."""
+        import asyncio
+        import subprocess
+
+        if not command:
+            await self._send("用法: !<命令>  例如: !pwd")
+            return
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            output = stdout.decode("utf-8", errors="replace").strip()
+            if output:
+                await self._send(f"```\n{output}\n```")
+            else:
+                await self._send(f"✓ (exit {proc.returncode})")
+        except TimeoutError:
+            await self._send("[Error] 命令超时（30s）")
+        except Exception as e:
+            await self._send(f"[Error] {e}")
 
     async def _send(self, text: str) -> None:
         """Send a message to the IM chat."""
