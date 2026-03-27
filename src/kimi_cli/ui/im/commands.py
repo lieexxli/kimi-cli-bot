@@ -13,19 +13,6 @@ if TYPE_CHECKING:
     from kimi_cli.ui.im import IMServer
 
 
-HELP_TEXT = """\
-🤖 Kimi Code AI Assistant
-
-Bot 命令：
-  /cancel  — 中止当前正在运行的 AI 任务
-  /status  — 显示 Bot 状态（仅管理员）
-"""
-
-
-async def handle_start(chat_id: str, server: IMServer) -> None:
-    await server.send_to_chat(chat_id, HELP_TEXT)
-
-
 async def handle_cancel(chat_id: str, server: IMServer) -> None:
     session = server.get_session(chat_id)
     if session is None:

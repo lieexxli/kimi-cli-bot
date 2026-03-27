@@ -55,7 +55,6 @@ class TelegramAdapter(IMAdapter):
     async def start(self) -> None:
         try:
             from aiogram import Bot, Dispatcher
-            from aiogram.filters import CommandStart
             from aiogram.types import CallbackQuery, Message
         except ImportError as e:
             raise RuntimeError(
@@ -72,21 +71,11 @@ class TelegramAdapter(IMAdapter):
         from kimi_cli.ui.im import get_current_im_server
         from kimi_cli.ui.im.commands import (
             handle_cancel,
-            handle_start,
             handle_status,
         )
 
         # Register command handlers FIRST — aiogram matches in registration order,
         # so these must come before the catch-all @self._dp.message() handler.
-        @self._dp.message(CommandStart())
-        async def handle_start_cmd(message: Message) -> None:  # type: ignore[reportUnusedFunction]
-            chat_id = str(message.chat.id)
-            server = get_current_im_server()
-            if server:
-                await handle_start(chat_id, server)
-            else:
-                await message.answer("Hello! I'm Kimi Code AI assistant.")
-
         @self._dp.message(Command("cancel"))
         async def on_cancel(message: Message) -> None:  # type: ignore[reportUnusedFunction]
             chat_id = str(message.chat.id)
