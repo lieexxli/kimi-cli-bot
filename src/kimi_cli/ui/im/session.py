@@ -26,11 +26,10 @@ UserInput = str | list[ContentPart]
 
 # Common shell commands that should bypass AI and run directly.
 _SHELL_COMMANDS = {
-    # filesystem
+    # filesystem (cd excluded: subprocess cd doesn't persist between calls)
     "ls",
     "dir",
     "pwd",
-    "cd",
     "mkdir",
     "rmdir",
     "rm",
@@ -130,8 +129,9 @@ def _looks_like_shell_command(text: str) -> bool:
     # Must be ASCII only (no Chinese/other natural language chars)
     if not stripped.isascii():
         return False
-    # Must not look like a question or sentence
-    if stripped.endswith("?") or stripped.endswith(".") or stripped.endswith("!"):
+    # Must not look like a question or sentence ending
+    # Use regex: sentence ends with a word-char then "." — excludes ".." path notation
+    if stripped.endswith("?") or stripped.endswith("!") or re.search(r"\w\.$", stripped):
         return False
     first_word = stripped.split()[0].lower() if stripped.split() else ""
     return first_word in _SHELL_COMMANDS
