@@ -24,118 +24,6 @@ from kimi_cli.wire.types import (
 
 UserInput = str | list[ContentPart]
 
-# Common shell commands that should bypass AI and run directly.
-_SHELL_COMMANDS = {
-    # filesystem (cd excluded: subprocess cd doesn't persist between calls)
-    "ls",
-    "dir",
-    "pwd",
-    "mkdir",
-    "rmdir",
-    "rm",
-    "cp",
-    "mv",
-    "cat",
-    "head",
-    "tail",
-    "touch",
-    "find",
-    "tree",
-    "du",
-    "df",
-    # network
-    "curl",
-    "curl.exe",
-    "wget",
-    "ping",
-    "nslookup",
-    "tracert",
-    "ipconfig",
-    "ifconfig",
-    "netstat",
-    "ssh",
-    "scp",
-    # system
-    "ps",
-    "top",
-    "whoami",
-    "hostname",
-    "uname",
-    "date",
-    "uptime",
-    "free",
-    "kill",
-    "which",
-    "where",
-    "type",
-    # dev
-    "git",
-    "python",
-    "python3",
-    "pip",
-    "pip3",
-    "node",
-    "npm",
-    "go",
-    "cargo",
-    "java",
-    "mvn",
-    # text
-    "grep",
-    "sed",
-    "awk",
-    "sort",
-    "uniq",
-    "wc",
-    "diff",
-    "echo",
-    # windows-specific
-    "get-childitem",
-    "get-content",
-    "set-location",
-    "copy-item",
-    "move-item",
-    "remove-item",
-    "new-item",
-    "invoke-webrequest",
-}
-
-
-def _translate_for_powershell(command: str) -> str:
-    """Translate common Unix command patterns to PowerShell equivalents."""
-    parts = command.strip().split(None, 1)
-    if not parts:
-        return command
-    cmd, rest = parts[0].lower(), parts[1] if len(parts) > 1 else ""
-
-    # curl → curl.exe (avoid Invoke-WebRequest alias which fails in some modes)
-    if cmd == "curl":
-        return f"curl.exe {rest}".strip()
-
-    # ls: strip Unix-only flags, add -Force for hidden files
-    if cmd == "ls":
-        # Remove Unix flags (-a, -l, -al, -la, etc.), keep paths
-        args = rest.split() if rest else []
-        paths = [a for a in args if not a.startswith("-")]
-        target = " ".join(paths) if paths else "."
-        return f"ls -Force {target}".strip()
-
-    return command
-
-
-def _looks_like_shell_command(text: str) -> bool:
-    """Return True if the text looks like a shell command invocation."""
-    stripped = text.strip()
-    # Must be ASCII only (no Chinese/other natural language chars)
-    if not stripped.isascii():
-        return False
-    # Must not look like a question or sentence ending
-    # Use regex: sentence ends with a word-char then "." — excludes ".." path notation
-    if stripped.endswith("?") or stripped.endswith("!") or re.search(r"\w\.$", stripped):
-        return False
-    first_word = stripped.split()[0].lower() if stripped.split() else ""
-    return first_word in _SHELL_COMMANDS
-
 
 if TYPE_CHECKING:
     from kimi_cli.app import KimiCLI
@@ -375,9 +263,6 @@ class IMSession:
         # ! prefix or shell-like command: run directly, bypass AI
         if isinstance(user_input, str) and user_input.startswith("!"):
             await self._run_shell_passthrough(user_input[1:].strip())
-            return
-        if isinstance(user_input, str) and _looks_like_shell_command(user_input):
-            await self._run_shell_passthrough(user_input.strip())
             return
         original_text = user_input if isinstance(user_input, str) else None
         # /new is an IM-friendly alias for /clear (text only)
@@ -685,7 +570,6 @@ class IMSession:
 
         try:
             if sys.platform == "win32":
-                command = _translate_for_powershell(command)
                 ps_command = f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
                 args = ["powershell.exe", "-command", ps_command]
             else:
