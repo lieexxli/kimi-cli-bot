@@ -185,6 +185,11 @@ class IMConfig(BaseModel):
         description="Allowed chat IDs whitelist (empty = allow all)",
     )
     """Whitelist of chat/group IDs allowed to use the bot. Empty list means allow all."""
+    admin_chat_ids: list[str] = Field(
+        default_factory=list,
+        description="Admin chat IDs: get full-auto mode regardless of default_mode",
+    )
+    """Admins bypass default_mode and rate limits (but NOT loop detection or output masking)."""
     work_dir: str = Field(default=".", description="Working directory for AI agent sessions")
     """Working directory for AI agent sessions (relative to CWD or absolute)."""
     model_name: str | None = Field(
@@ -192,11 +197,6 @@ class IMConfig(BaseModel):
         description="LLM model to use for IM sessions (overrides config default)",
     )
     """LLM model name for IM sessions. None means use the default from config."""
-    admin_chat_ids: list[str] = Field(
-        default_factory=list,
-        description="Admin chat IDs: get full-auto mode regardless of default_mode",
-    )
-    """Admins bypass default_mode and rate limits (but NOT loop detection or output masking)."""
     default_mode: str = Field(
         default="suggest",
         description="Default execution mode: 'suggest' (approval required) or 'full-auto' (yolo)",
@@ -209,6 +209,7 @@ class IMConfig(BaseModel):
     """Reaction emoji to acknowledge received messages. Set to '' to disable."""
     loop_detection_threshold: int = Field(
         default=5,
+        ge=1,
         description="Cancel turn if the same tool is called this many times consecutively",
     )
     """Loop detection: cancel if same tool called >= this many times in a row."""

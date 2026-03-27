@@ -115,6 +115,11 @@ class IMSession:
         self._message_queue: asyncio.Queue[UserInput] = asyncio.Queue()
         # Whether a turn is currently running
         self._turn_running = False
+        # Current turn's cancel event; None when no turn is running
+        self._current_cancel: asyncio.Event | None = None
+        # Loop detection: tracks consecutive calls to the same tool
+        self._loop_last_tool: str | None = None
+        self._loop_consecutive: int = 0
 
     async def handle_message(self, text: UserInput) -> None:
         """
@@ -124,6 +129,32 @@ class IMSession:
         await self._message_queue.put(text)
         if not self._turn_running:
             asyncio.create_task(self._run_next_turn())
+
+    async def cancel_current_turn(self) -> None:
+        """Cancel the currently running turn, if any."""
+        if self._current_cancel is None:
+            await self._send("当前没有正在运行的任务。")
+            return
+        self._current_cancel.set()
+
+    def _check_and_update_loop_counter(self, tool_name: str) -> bool:
+        """Update the loop counter for tool_name.
+
+        Returns True if the loop detection threshold has been reached.
+        Resets the counter when a different tool is called.
+        """
+        if tool_name != self._loop_last_tool:
+            self._loop_last_tool = tool_name
+            self._loop_consecutive = 1
+            return False
+        self._loop_consecutive += 1
+        threshold = self._im_config.loop_detection_threshold
+        return self._loop_consecutive >= threshold
+
+    def _reset_loop_counter(self) -> None:
+        """Reset loop detection state (called at end of each turn)."""
+        self._loop_last_tool = None
+        self._loop_consecutive = 0
 
     async def _run_next_turn(self) -> None:
         """Dequeue the next user message and run one AI turn."""
@@ -207,7 +238,8 @@ class IMSession:
             await self._send("Sorry, I encountered an error starting the AI session.")
             return
 
-        cancel_event = asyncio.Event()
+        self._current_cancel = asyncio.Event()
+        cancel_event = self._current_cancel
         text_buffer: list[str] = []
 
         try:
@@ -247,14 +279,16 @@ class IMSession:
 
         except asyncio.CancelledError:
             cancel_event.set()
-            await self._send("[Cancelled]")
+            await self._send("[已取消]")
         except Exception as e:
             logger.exception("Error during IM AI turn for chat_id={chat_id}", chat_id=self._chat_id)
-            # Flush whatever we have
             if text_buffer:
                 await self._send("".join(text_buffer))
                 text_buffer.clear()
             await self._send(f"[Error] {e}")
+        finally:
+            self._current_cancel = None
+            self._reset_loop_counter()
 
     async def _handle_approval(self, req: ApprovalRequest) -> None:
         """Forward an approval request to the user and wait for their response."""

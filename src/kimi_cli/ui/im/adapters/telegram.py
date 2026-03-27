@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, override
 
-from kimi_cli.ui.im import IMAdapter
+from kimi_cli.ui.im import CallbackHandler, IMAdapter
 from kimi_cli.utils.logging import logger
 
 if TYPE_CHECKING:
@@ -35,6 +35,7 @@ class TelegramAdapter(IMAdapter):
         self._im_config = im_config
         self._bot = None
         self._dp = None
+        self._callback_handlers: dict[int, CallbackHandler] = {}
 
     def _get_token(self) -> str:
         token = self._im_config.token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -46,11 +47,16 @@ class TelegramAdapter(IMAdapter):
         return token
 
     @override
+    def register_callback_handler(self, message_id: int, handler: CallbackHandler) -> None:
+        """Register a one-shot handler for an inline keyboard button press."""
+        self._callback_handlers[message_id] = handler
+
+    @override
     async def start(self) -> None:
         try:
             from aiogram import Bot, Dispatcher
             from aiogram.filters import CommandStart
-            from aiogram.types import Message
+            from aiogram.types import CallbackQuery, Message
         except ImportError as e:
             raise RuntimeError(
                 "aiogram is required for Telegram integration. "
@@ -97,6 +103,19 @@ class TelegramAdapter(IMAdapter):
                 "Hello! I'm Kimi Code AI assistant. Send me a message to get started."
             )
 
+        # Register callback_query handler
+        @self._dp.callback_query()
+        async def handle_callback_query(callback_query: CallbackQuery) -> None:  # type: ignore[reportUnusedFunction]
+            if callback_query.message is None:
+                await callback_query.answer()
+                return
+            message_id = callback_query.message.message_id
+            handler = self._callback_handlers.pop(message_id, None)
+            if handler is not None:
+                await handler(callback_query.id, callback_query.data or "")
+            else:
+                await self.answer_callback_query(callback_query.id, "已过期，请重新操作")
+
         if self._im_config.webhook_url:
             # Webhook mode
             webhook_url = self._im_config.webhook_url
@@ -128,7 +147,7 @@ class TelegramAdapter(IMAdapter):
             import asyncio
 
             self._polling_task = asyncio.create_task(
-                self._dp.start_polling(self._bot, allowed_updates=["message"])  # type: ignore[reportUnknownMemberType]
+                self._dp.start_polling(self._bot, allowed_updates=["message", "callback_query"])  # type: ignore[reportUnknownMemberType]
             )
 
     async def _dispatch_photo(self, chat_id: str, user_id: str, file_id: str, caption: str) -> None:
@@ -203,16 +222,98 @@ class TelegramAdapter(IMAdapter):
             )
             return None
 
+    async def send_message_with_keyboard(
+        self,
+        chat_id: str,
+        text: str,
+        keyboard: list[list[tuple[str, str]]],
+    ) -> int | None:
+        """Send a message with InlineKeyboard. keyboard[row][col] = (label, callback_data)."""
+        if self._bot is None:
+            logger.warning("Cannot send Telegram message: bot not started")
+            return None
+        try:
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            buttons = [
+                [InlineKeyboardButton(text=label, callback_data=data) for label, data in row]
+                for row in keyboard
+            ]
+            markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+            msg = await self._bot.send_message(
+                chat_id=int(chat_id), text=text, reply_markup=markup
+            )
+            return msg.message_id
+        except Exception:
+            logger.exception(
+                "Failed to send Telegram keyboard message to chat_id={chat_id}", chat_id=chat_id
+            )
+            return None
+
     @override
     async def edit_message(
         self, chat_id: str, message_id: int, text: str, remove_keyboard: bool = False
     ) -> None:
-        """Edit a previously sent message. Implemented in Task 3."""
+        if self._bot is None:
+            return
+        try:
+            from aiogram.types import InlineKeyboardMarkup
+
+            reply_markup = InlineKeyboardMarkup(inline_keyboard=[]) if remove_keyboard else None
+            await self._bot.edit_message_text(
+                chat_id=int(chat_id),
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to edit Telegram message {message_id} in chat_id={chat_id}",
+                message_id=message_id,
+                chat_id=chat_id,
+            )
 
     @override
     async def send_chat_action(self, chat_id: str, action: str = "typing") -> None:
-        """Send a chat action indicator. Implemented in Task 3."""
+        if self._bot is None:
+            return
+        try:
+            await self._bot.send_chat_action(chat_id=int(chat_id), action=action)  # type: ignore[arg-type]
+        except Exception:
+            logger.exception(
+                "Failed to send chat action to chat_id={chat_id}", chat_id=chat_id
+            )
 
     @override
     async def answer_callback_query(self, callback_query_id: str, text: str = "") -> None:
-        """Acknowledge an inline keyboard button press. Implemented in Task 3."""
+        if self._bot is None:
+            return
+        try:
+            await self._bot.answer_callback_query(
+                callback_query_id=callback_query_id,
+                text=text or None,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to answer callback_query {cqid}", cqid=callback_query_id
+            )
+
+    async def set_message_reaction(
+        self, chat_id: str, message_id: int, emoji: str
+    ) -> None:
+        """Set an emoji reaction on a message (Bot API 7.0+). Silently ignores errors."""
+        if self._bot is None:
+            return
+        try:
+            from aiogram.types import ReactionTypeEmoji
+
+            await self._bot.set_message_reaction(
+                chat_id=int(chat_id),
+                message_id=message_id,
+                reaction=[ReactionTypeEmoji(type="emoji", emoji=emoji)],
+            )
+        except Exception:
+            logger.debug(
+                "set_message_reaction failed for chat_id={chat_id} (may not be supported)",
+                chat_id=chat_id,
+            )
