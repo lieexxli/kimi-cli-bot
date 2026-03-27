@@ -70,8 +70,7 @@ async def _maybe_convert_image_url(text: str) -> UserInput:
     try:
         import httpx
 
-        loop = asyncio.get_event_loop()
-        resp = await loop.run_in_executor(
+        resp = await asyncio.get_running_loop().run_in_executor(
             None, lambda: httpx.head(url, follow_redirects=True, timeout=5)
         )
         content_type = resp.headers.get("content-type", "").split(";")[0].strip()
@@ -86,14 +85,30 @@ async def _maybe_convert_image_url(text: str) -> UserInput:
 
 
 def _split_message(text: str, max_chars: int = _MAX_MSG_CHARS) -> list[str]:
-    """Split a long message into chunks that fit within IM limits."""
+    """Split a long message into chunks that fit within IM limits.
+
+    Splits on newlines where possible to avoid cutting mid-word or mid-codeblock.
+    If a single line exceeds max_chars it is hard-split as a last resort.
+    """
     if len(text) <= max_chars:
         return [text]
     chunks: list[str] = []
-    while text:
-        chunk = text[:max_chars]
-        chunks.append(chunk)
-        text = text[max_chars:]
+    current: list[str] = []
+    current_len = 0
+    for line in text.splitlines(keepends=True):
+        if current_len + len(line) > max_chars and current:
+            chunks.append("".join(current))
+            current = []
+            current_len = 0
+        # Single line longer than limit: hard-split it
+        if len(line) > max_chars:
+            for i in range(0, len(line), max_chars):
+                chunks.append(line[i : i + max_chars])
+        else:
+            current.append(line)
+            current_len += len(line)
+    if current:
+        chunks.append("".join(current))
     return chunks
 
 
@@ -264,7 +279,6 @@ class IMSession:
         if isinstance(user_input, str) and user_input.startswith("!"):
             await self._run_shell_passthrough(user_input[1:].strip())
             return
-        original_text = user_input if isinstance(user_input, str) else None
         # /new is an IM-friendly alias for /clear (text only)
         if isinstance(user_input, str) and user_input.strip().lower() in ("/new", "/new "):
             user_input = "/clear"
@@ -372,13 +386,6 @@ class IMSession:
             cancel_event.set()
             await self._send("[已取消]")
         except Exception as e:
-            from kosong.chat_provider import APIEmptyResponseError
-
-            if isinstance(e, APIEmptyResponseError) and original_text:
-                # Gemini returned empty — treat input as a shell command passthrough
-                logger.debug("Empty AI response, falling back to shell: {cmd}", cmd=original_text)
-                await self._run_shell_passthrough(original_text.strip())
-                return
             logger.exception("Error during IM AI turn for chat_id={chat_id}", chat_id=self._chat_id)
             if text_buffer:
                 masked = mask_output_conditional(
