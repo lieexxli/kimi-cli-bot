@@ -228,7 +228,15 @@ class IMSession:
                 _wd_meta.last_session_id = session.id
                 save_metadata(_meta)
             is_admin = self._chat_id in self._im_config.admin_chat_ids
-            yolo = is_admin or (self._im_config.default_mode == "full-auto")
+            effective_mode = "full-auto" if is_admin else self._im_config.default_mode
+            yolo = effective_mode == "full-auto"
+
+            if effective_mode == "auto":
+                # Pre-approve low-risk actions; shell/outside-workdir still require approval.
+                _LOW_RISK_ACTIONS = {"read file", "edit file", "stop background task"}
+                session.state.approval.auto_approve_actions |= _LOW_RISK_ACTIONS
+                session.save_state()
+
             self._kimi = await KimiCLI.create(
                 session,
                 config=self._config,

@@ -199,9 +199,13 @@ class IMConfig(BaseModel):
     """LLM model name for IM sessions. None means use the default from config."""
     default_mode: str = Field(
         default="suggest",
-        description="Default execution mode: 'suggest' (approval required) or 'full-auto' (yolo)",
+        description=(
+            "Default execution mode: 'suggest' (all actions need approval), "
+            "'auto' (low-risk auto-approved, shell/outside-workdir need approval), "
+            "'full-auto' (yolo, nothing needs approval)"
+        ),
     )
-    """Execution mode for non-admin users. 'suggest' = yolo=False, 'full-auto' = yolo=True."""
+    """Execution mode for non-admin users. suggest=all approval, auto=smart, full-auto=yolo."""
     ack_reaction: str = Field(
         default="👀",
         description="Emoji reaction to set when a message is received. Empty string to disable.",
