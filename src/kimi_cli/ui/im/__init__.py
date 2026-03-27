@@ -115,6 +115,12 @@ class IMServer:
         """Delegate to adapter."""
         self._adapter.register_callback_handler(message_id, handler)
 
+    async def edit_chat_message(
+        self, chat_id: str, message_id: int, text: str, remove_keyboard: bool = False
+    ) -> None:
+        """Edit a previously sent message. Used for streaming output."""
+        await self._adapter.edit_message(chat_id, message_id, text, remove_keyboard)
+
     async def run(self) -> None:
         """Start the IM server and block until cancelled."""
         global _current_server

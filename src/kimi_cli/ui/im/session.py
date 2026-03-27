@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import TYPE_CHECKING
 
 from kosong.message import ImageURLPart, TextPart, ThinkPart
 
+from kimi_cli.ui.im.masking import mask_output_conditional
 from kimi_cli.utils.logging import logger
 from kimi_cli.wire.types import (
     ApprovalRequest,
@@ -120,6 +122,10 @@ class IMSession:
         # Loop detection: tracks consecutive calls to the same tool
         self._loop_last_tool: str | None = None
         self._loop_consecutive: int = 0
+        # Streaming state for current turn
+        self._stream_msg_id: int | None = None
+        self._stream_last_edit: float = 0.0
+        self._stream_edit_interval: float = 0.5  # seconds between edits
 
     async def handle_message(self, text: UserInput) -> None:
         """
@@ -205,11 +211,13 @@ class IMSession:
             if _wd_meta is not None:
                 _wd_meta.last_session_id = session.id
                 save_metadata(_meta)
+            is_admin = self._chat_id in self._im_config.admin_chat_ids
+            yolo = is_admin or (self._im_config.default_mode == "full-auto")
             self._kimi = await KimiCLI.create(
                 session,
                 config=self._config,
                 model_name=self._im_config.model_name,
-                yolo=True,  # IM mode: no interactive terminal for approvals
+                yolo=yolo,
             )
         return self._kimi
 
@@ -241,36 +249,71 @@ class IMSession:
         self._current_cancel = asyncio.Event()
         cancel_event = self._current_cancel
         text_buffer: list[str] = []
+        # Send "thinking" placeholder immediately
+        await self._send_placeholder("⌛ 思考中...")
 
         try:
             async for msg in kimi.run(user_input, cancel_event, merge_wire_messages=True):  # type: ignore[arg-type]
                 match msg:
                     case ContentPart() as cp:
-                        # ContentPart is a union base; each instance IS a specific part type
                         if isinstance(cp, ThinkPart):
                             pass  # skip internal thinking
                         elif isinstance(cp, TextPart):
                             text_buffer.append(cp.text)
+                            # Throttled live update
+                            current_text = "".join(text_buffer)
+                            masked = mask_output_conditional(
+                                current_text, enabled=self._im_config.output_masking_enabled
+                            )
+                            await self._update_stream(masked)
 
                     case TurnEnd():
-                        # Flush accumulated text to IM
                         if text_buffer:
                             full_text = "".join(text_buffer)
-                            for chunk in _split_message(full_text):
-                                await self._send(chunk)
+                            masked = mask_output_conditional(
+                                full_text, enabled=self._im_config.output_masking_enabled
+                            )
+                            if self._stream_msg_id is not None:
+                                chunks = _split_message(masked)
+                                if len(chunks) == 1:
+                                    await self._update_stream(masked, force=True)
+                                else:
+                                    # First chunk goes into placeholder
+                                    await self._update_stream(chunks[0] + " ▶", force=True)
+                                    for i, chunk in enumerate(chunks[1:], 2):
+                                        suffix = " ▶" if i < len(chunks) else ""
+                                        await self._send(f"({i}/{len(chunks)}) {chunk}{suffix}")
+                                self._stream_msg_id = None
+                            else:
+                                for chunk in _split_message(masked):
+                                    await self._send(chunk)
                             text_buffer.clear()
 
                     case ApprovalRequest() as req:
-                        # Flush any buffered text first
                         if text_buffer:
-                            await self._send("".join(text_buffer))
+                            full_text = "".join(text_buffer)
+                            masked = mask_output_conditional(
+                                full_text, enabled=self._im_config.output_masking_enabled
+                            )
+                            if self._stream_msg_id is not None:
+                                await self._update_stream(masked, force=True)
+                                self._stream_msg_id = None
+                            else:
+                                await self._send(masked)
                             text_buffer.clear()
                         await self._handle_approval(req)
 
                     case QuestionRequest() as req:
-                        # Flush any buffered text first
                         if text_buffer:
-                            await self._send("".join(text_buffer))
+                            full_text = "".join(text_buffer)
+                            masked = mask_output_conditional(
+                                full_text, enabled=self._im_config.output_masking_enabled
+                            )
+                            if self._stream_msg_id is not None:
+                                await self._update_stream(masked, force=True)
+                                self._stream_msg_id = None
+                            else:
+                                await self._send(masked)
                             text_buffer.clear()
                         await self._handle_question(req)
 
@@ -283,11 +326,15 @@ class IMSession:
         except Exception as e:
             logger.exception("Error during IM AI turn for chat_id={chat_id}", chat_id=self._chat_id)
             if text_buffer:
-                await self._send("".join(text_buffer))
+                masked = mask_output_conditional(
+                    "".join(text_buffer), enabled=self._im_config.output_masking_enabled
+                )
+                await self._send(masked)
                 text_buffer.clear()
             await self._send(f"[Error] {e}")
         finally:
             self._current_cancel = None
+            self._stream_msg_id = None
             self._reset_loop_counter()
 
     async def _handle_approval(self, req: ApprovalRequest) -> None:
@@ -356,6 +403,39 @@ class IMSession:
         # List input (e.g. image parts): extract text content
         texts = [p.text for p in result if isinstance(p, TextPart)]
         return " ".join(texts) if texts else ""
+
+    async def _send_placeholder(self, text: str) -> int | None:
+        """Send a placeholder message and record its message_id for streaming."""
+        try:
+            msg_id = await self._server.send_to_chat(self._chat_id, text)
+            self._stream_msg_id = msg_id
+            self._stream_last_edit = time.monotonic()
+            return msg_id
+        except Exception:
+            logger.exception(
+                "Failed to send placeholder to chat_id={chat_id}", chat_id=self._chat_id
+            )
+            return None
+
+    async def _update_stream(self, text: str, *, force: bool = False) -> None:
+        """Edit the current streaming message with new text.
+
+        Throttled to _stream_edit_interval seconds unless force=True.
+        Falls back to sending a new message if no stream_msg_id is set.
+        """
+        if self._stream_msg_id is None:
+            await self._send(text)
+            return
+        now = time.monotonic()
+        if not force and (now - self._stream_last_edit) < self._stream_edit_interval:
+            return
+        self._stream_last_edit = now
+        try:
+            await self._server.edit_chat_message(self._chat_id, self._stream_msg_id, text)
+        except Exception:
+            logger.exception(
+                "Failed to edit stream message in chat_id={chat_id}", chat_id=self._chat_id
+            )
 
     async def _send(self, text: str) -> None:
         """Send a message to the IM chat."""
