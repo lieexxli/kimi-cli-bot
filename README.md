@@ -126,7 +126,6 @@ Bot 有三种执行模式，在 `kimi.toml` 的 `[im]` 段配置，由管理员�
 !pwd
 !ls -la
 !git status
-!curl.exe myip.ipip.net
 ```
 
 不管当前是哪种执行模式，`!` 命令都直接执行。
@@ -164,7 +163,7 @@ Bot 有三种执行模式，在 `kimi.toml` 的 `[im]` 段配置，由管理员�
 ```
 work_dir/
   sessions/
-    8046747687/   ← 用户 A
+    9876543222/   ← 用户 A
     1234567890/   ← 用户 B
 ```
 

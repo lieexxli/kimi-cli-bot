@@ -6,7 +6,43 @@ model = "gemini-2.5-flash-lite"
 max_context_size = 1048576
 capabilities = ["image_in", "thinking", "video_in"]
 
+# 也可以添加其他模型，例如 Kimi K2：
+# [models."kimi/kimi-k2.5"]
+# provider = "kimi"
+# model = "kimi-k2.5"
+# max_context_size = 250000
+# capabilities = ["image_in"]
+
 [providers.gemini]
 type = "gemini"
-base_url = "" # keep empty
-api_key = "YOUR_GEMINI_API_KEY"
+base_url = "https://generativelanguage.googleapis.com"
+api_key = "YOUR_GEMINI_API_KEY"   # 前往 https://aistudio.google.com/apikey 获取
+
+# 如需使用 Kimi 模型，取消以下注释并填入 API Key：
+# [providers.kimi]
+# type = "kimi"
+# base_url = "https://api.moonshot.cn/v1"
+# api_key = "YOUR_KIMI_API_KEY"
+
+[im]
+platform = "telegram"
+# Bot Token 建议放在 .env 文件中（TELEGRAM_BOT_TOKEN），此处留空
+token = ""
+# 白名单：只有列出的 chat_id 才能使用 Bot，留空则允许所有人
+# 通过 @userinfobot 获取你的 chat_id
+allowed_chat_ids = ["YOUR_CHAT_ID"]
+# 管理员：不受 default_mode 限制，始终走 full-auto
+admin_chat_ids = ["YOUR_CHAT_ID"]
+# 执行模式（由管理员在服务端统一控制）：
+#   suggest   — 所有工具调用都需要点按钮审批（适合公开 Bot）
+#   auto      — 文件读写/命令执行自动通过，仅工作目录外的编辑需审批（推荐）
+#   full-auto — 完全自动，无需任何审批（仅限个人使用）
+default_mode = "auto"
+# Bot 的工作根目录，每个用户会在此目录下创建独立子目录
+work_dir = "."
+# 收到消息时的回应 emoji（留空禁用）
+ack_reaction = ""
+# 连续相同工具调用多少次后触发循环检测
+loop_detection_threshold = 5
+# 自动遮蔽输出中的 API Key、Token 等敏感信息
+output_masking_enabled = true
