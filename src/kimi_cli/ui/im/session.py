@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -261,6 +263,7 @@ class IMSession:
         if isinstance(user_input, str) and user_input.startswith("!"):
             await self._run_shell_passthrough(user_input[1:].strip())
             return
+        original_text = user_input if isinstance(user_input, str) else None
         # /new is an IM-friendly alias for /clear (text only)
         if isinstance(user_input, str) and user_input.strip().lower() in ("/new", "/new "):
             user_input = "/clear"
@@ -368,6 +371,13 @@ class IMSession:
             cancel_event.set()
             await self._send("[已取消]")
         except Exception as e:
+            from kosong.chat_provider import APIEmptyResponseError
+
+            if isinstance(e, APIEmptyResponseError) and original_text:
+                # Gemini returned empty — treat input as a shell command passthrough
+                logger.debug("Empty AI response, falling back to shell: {cmd}", cmd=original_text)
+                await self._run_shell_passthrough(original_text.strip())
+                return
             logger.exception("Error during IM AI turn for chat_id={chat_id}", chat_id=self._chat_id)
             if text_buffer:
                 masked = mask_output_conditional(
@@ -546,20 +556,25 @@ class IMSession:
 
     async def _run_shell_passthrough(self, command: str) -> None:
         """Run a shell command directly and send output back, bypassing AI."""
-        import asyncio
-        import subprocess
-
         if not command:
             await self._send("用法: !<命令>  例如: !pwd")
             return
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
+            if sys.platform == "win32":
+                # Force UTF-8 output from PowerShell
+                ps_command = f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
+                args = ["powershell.exe", "-NonInteractive", "-command", ps_command]
+                encoding = "utf-8"
+            else:
+                args = ["/bin/bash", "-c", command]
+                encoding = "utf-8"
+            proc = await asyncio.create_subprocess_exec(
+                *args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-            output = stdout.decode("utf-8", errors="replace").strip()
+            output = stdout.decode(encoding, errors="replace").strip()
             if output:
                 await self._send(f"```\n{output}\n```")
             else:
