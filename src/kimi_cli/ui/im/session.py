@@ -109,7 +109,7 @@ class IMSession:
         config: Config,
     ) -> None:
         self._chat_id = chat_id
-        self._server = server
+        self._server: IMServer = server
         self._im_config = im_config
         self._config = config
         self._kimi: KimiCLI | None = None
