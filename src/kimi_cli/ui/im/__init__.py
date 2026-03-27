@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from kimi_cli.ui.im._utils import split_message as _split_message
 from kimi_cli.utils.logging import logger
 
 if TYPE_CHECKING:
@@ -126,7 +127,7 @@ class IMServer:
         """Return the effective model name (IM override or global default)."""
         return self._im_config.model_name or self._config.default_model or "unknown"
 
-    def get_session(self, chat_id: str) -> Any:
+    def get_session(self, chat_id: str) -> IMSession | None:
         """Return the IMSession for *chat_id*, or None if not active."""
         return self._sessions.get(chat_id)
 
@@ -139,26 +140,7 @@ class IMServer:
 
         Long messages are automatically split to stay within IM platform limits.
         """
-        _MAX = 4000
-        if len(text) <= _MAX:
-            return await self._adapter.send_message(chat_id, text)
-        # Split on newlines where possible, hard-split oversized lines as last resort
-        chunks: list[str] = []
-        current: list[str] = []
-        current_len = 0
-        for line in text.splitlines(keepends=True):
-            if current_len + len(line) > _MAX and current:
-                chunks.append("".join(current))
-                current = []
-                current_len = 0
-            if len(line) > _MAX:
-                for i in range(0, len(line), _MAX):
-                    chunks.append(line[i : i + _MAX])
-            else:
-                current.append(line)
-                current_len += len(line)
-        if current:
-            chunks.append("".join(current))
+        chunks = _split_message(text)
         last_id: int | None = None
         for chunk in chunks:
             last_id = await self._adapter.send_message(chat_id, chunk)

@@ -226,6 +226,14 @@ class IMConfig(BaseModel):
         description="Mask sensitive values (API keys, tokens) before sending to IM",
     )
     """Whether to apply output masking to all messages sent via IM."""
+    response_language: str | None = Field(
+        default=None,
+        description=(
+            "Language name to inject as a reply-language instruction (e.g. '中文', 'English'). "
+            "None disables the injection entirely."
+        ),
+    )
+    """When set, prepends '[请用<language>回复]' to every user message sent to the AI."""
 
 
 class Config(BaseModel):

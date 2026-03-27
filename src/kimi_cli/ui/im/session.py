@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from kosong.message import ImageURLPart, TextPart, ThinkPart
 
+from kimi_cli.ui.im._utils import split_message as _split_message
 from kimi_cli.ui.im.masking import mask_output_conditional
 from kimi_cli.utils.logging import logger
 from kimi_cli.wire.types import (
@@ -40,10 +41,6 @@ _IMAGE_CONTENT_TYPES = {
     "image/tiff",
 }
 _URL_RE = re.compile(r"^https?://\S+$")
-
-# Maximum characters per IM message before splitting
-_MAX_MSG_CHARS = 4000
-
 
 async def _maybe_convert_image_url(text: str) -> UserInput:
     """If the message is a bare image URL, return multimodal parts; otherwise return as-is."""
@@ -82,34 +79,6 @@ async def _maybe_convert_image_url(text: str) -> UserInput:
     except Exception:
         pass
     return text
-
-
-def _split_message(text: str, max_chars: int = _MAX_MSG_CHARS) -> list[str]:
-    """Split a long message into chunks that fit within IM limits.
-
-    Splits on newlines where possible to avoid cutting mid-word or mid-codeblock.
-    If a single line exceeds max_chars it is hard-split as a last resort.
-    """
-    if len(text) <= max_chars:
-        return [text]
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-    for line in text.splitlines(keepends=True):
-        if current_len + len(line) > max_chars and current:
-            chunks.append("".join(current))
-            current = []
-            current_len = 0
-        # Single line longer than limit: hard-split it
-        if len(line) > max_chars:
-            for i in range(0, len(line), max_chars):
-                chunks.append(line[i : i + max_chars])
-        else:
-            current.append(line)
-            current_len += len(line)
-    if current:
-        chunks.append("".join(current))
-    return chunks
 
 
 class IMSession:
@@ -307,13 +276,15 @@ class IMSession:
         # If the message is a bare URL pointing to an image, dispatch it as an image
         elif isinstance(user_input, str):
             user_input = await _maybe_convert_image_url(user_input)
-        # Inject language instruction into every turn
-        if isinstance(user_input, str) and not user_input.startswith("/"):
-            user_input = f"[请用中文回复]\n{user_input}"
-        elif isinstance(user_input, list):
-            from kosong.message import TextPart as _TextPart
+        # Optionally inject a language instruction when response_language is configured
+        lang = self._im_config.response_language
+        if lang:
+            if isinstance(user_input, str) and not user_input.startswith("/"):
+                user_input = f"[请用{lang}回复]\n{user_input}"
+            elif isinstance(user_input, list):
+                from kosong.message import TextPart as _TextPart
 
-            user_input = [_TextPart(text="[请用中文回复]")] + list(user_input)
+                user_input = [_TextPart(text=f"[请用{lang}回复]")] + list(user_input)
         try:
             kimi = await self._get_kimi()
         except Exception:
@@ -453,14 +424,8 @@ class IMSession:
             result_future: asyncio.Future[tuple[str, str]] = (
                 asyncio.get_running_loop().create_future()
             )
-            timed_out = False
 
             async def on_button(callback_query_id: str, data: str) -> None:
-                if timed_out:
-                    # Turn already rejected; ack the late press with an expired notice
-                    if isinstance(adapter, TelegramAdapter):
-                        await adapter.answer_callback_query(callback_query_id, "已过期，请重新操作")
-                    return
                 if not result_future.done():
                     result_future.set_result((callback_query_id, data))
 
@@ -486,7 +451,6 @@ class IMSession:
                     reason = await self._wait_for_user_reply(timeout=60.0)
                     req.resolve("reject", feedback=reason or "用户拒绝")
             except TimeoutError:
-                timed_out = True
                 self._server.unregister_callback_handler(msg_id)
                 await self._server.edit_chat_message(
                     self._chat_id,
