@@ -265,8 +265,6 @@ class IMSession:
         self._current_cancel = asyncio.Event()
         cancel_event = self._current_cancel
         text_buffer: list[str] = []
-        # Send "thinking" placeholder immediately
-        await self._send_placeholder("⌛ 思考中...")
 
         try:
             async for msg in kimi.run(user_input, cancel_event, merge_wire_messages=False):  # type: ignore[arg-type]
@@ -508,10 +506,10 @@ class IMSession:
         """Edit the current streaming message with new text.
 
         Throttled to _stream_edit_interval seconds unless force=True.
-        Falls back to sending a new message if no stream_msg_id is set.
+        On the first call (no stream_msg_id), sends a new message and records its ID.
         """
         if self._stream_msg_id is None:
-            await self._send(text)
+            await self._send_placeholder(text)
             return
         now = time.monotonic()
         if not force and (now - self._stream_last_edit) < self._stream_edit_interval:
