@@ -28,7 +28,7 @@ async def handle_status(chat_id: str, server: IMServer) -> None:
         return
 
     active = len(server.active_chat_ids())
-    model = server.im_config.model_name or "（默认）"
+    model = server.default_model
     mode = server.im_config.default_mode
 
     version: str = "unknown"

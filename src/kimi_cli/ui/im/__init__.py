@@ -115,6 +115,11 @@ class IMServer:
         """Return the IM configuration."""
         return self._im_config
 
+    @property
+    def default_model(self) -> str:
+        """Return the effective model name (IM override or global default)."""
+        return self._im_config.model_name or self._config.default_model or "unknown"
+
     def get_session(self, chat_id: str) -> Any:
         """Return the IMSession for *chat_id*, or None if not active."""
         return self._sessions.get(chat_id)
