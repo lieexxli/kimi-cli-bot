@@ -28,8 +28,8 @@ def get_current_im_server() -> IMServer | None:
 
 
 UserInput = Any  # str | list[ContentPart]
-OnMessageCallback = Callable[[str, str, UserInput], Coroutine[Any, Any, None]]
-"""Callback type: (chat_id, user_id, text_or_parts) -> None"""
+OnMessageCallback = Callable[[str, str, UserInput, int | None], Coroutine[Any, Any, None]]
+"""Callback type: (chat_id, user_id, text_or_parts, message_id) -> None"""
 
 CallbackHandler = Callable[[str, str], Awaitable[None]]
 """Inline keyboard callback: (callback_query_id, callback_data) -> None"""
@@ -50,10 +50,12 @@ class IMAdapter(ABC):
         Default implementation is a no-op; override in adapters that support inline keyboards.
         """
 
-    async def _dispatch_message(self, chat_id: str, user_id: str, text: UserInput) -> None:
-        """Called by subclasses to dispatch an incoming message (text or multimodal parts)."""
+    async def _dispatch_message(
+        self, chat_id: str, user_id: str, text: UserInput, message_id: int | None = None
+    ) -> None:
+        """Called by subclasses to dispatch an incoming message."""
         if self._on_message is not None:
-            await self._on_message(chat_id, user_id, text)
+            await self._on_message(chat_id, user_id, text, message_id)
 
     @abstractmethod
     async def start(self) -> None:
@@ -103,6 +105,20 @@ class IMServer:
         self._config = config
         self._sessions: dict[str, Any] = {}  # chat_id -> IMSession
 
+    @property
+    def adapter(self) -> IMAdapter:
+        """Return the underlying IM adapter."""
+        return self._adapter
+
+    @property
+    def im_config(self) -> IMConfig:
+        """Return the IM configuration."""
+        return self._im_config
+
+    def get_session(self, chat_id: str) -> Any:
+        """Return the IMSession for *chat_id*, or None if not active."""
+        return self._sessions.get(chat_id)
+
     def active_chat_ids(self) -> list[str]:
         """Return the list of currently active chat IDs."""
         return list(self._sessions.keys())
@@ -141,7 +157,9 @@ class IMServer:
             await self._adapter.stop()
             logger.info("IM server stopped")
 
-    async def _on_message(self, chat_id: str, user_id: str, text: UserInput) -> None:
+    async def _on_message(
+        self, chat_id: str, user_id: str, text: UserInput, message_id: int | None = None
+    ) -> None:
         """Dispatch an incoming IM message to the appropriate session."""
         allowed = self._im_config.allowed_chat_ids
         if allowed and chat_id not in allowed:
@@ -161,4 +179,4 @@ class IMServer:
                 config=self._config,
             )
         session = self._sessions[chat_id]
-        await session.handle_message(text)
+        await session.handle_message(text, message_id=message_id)

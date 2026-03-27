@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from typing import TYPE_CHECKING
@@ -127,11 +128,25 @@ class IMSession:
         self._stream_last_edit: float = 0.0
         self._stream_edit_interval: float = 0.5  # seconds between edits
 
-    async def handle_message(self, text: UserInput) -> None:
+    async def handle_message(self, text: UserInput, *, message_id: int | None = None) -> None:
+        """Called when the user sends a message.
+
+        Immediately sends ack feedback (typing action + reaction), then queues the message.
         """
-        Called when the user sends a message.
-        Queues the message and starts a turn if none is running.
-        """
+        # Ack feedback: typing indicator
+        with contextlib.suppress(Exception):
+            await self._server.adapter.send_chat_action(self._chat_id, "typing")
+
+        # Ack feedback: emoji reaction (Telegram Bot API 7.0+, ignore errors)
+        if message_id is not None and self._im_config.ack_reaction:
+            from kimi_cli.ui.im.adapters.telegram import TelegramAdapter
+
+            adapter = self._server.adapter
+            if isinstance(adapter, TelegramAdapter):
+                await adapter.set_message_reaction(
+                    self._chat_id, message_id, self._im_config.ack_reaction
+                )
+
         await self._message_queue.put(text)
         if not self._turn_running:
             asyncio.create_task(self._run_next_turn())
@@ -338,24 +353,79 @@ class IMSession:
             self._reset_loop_counter()
 
     async def _handle_approval(self, req: ApprovalRequest) -> None:
-        """Forward an approval request to the user and wait for their response."""
+        """Forward an approval request to the user via InlineKeyboard buttons."""
         display_lines: list[str] = [
-            "⚠️ Action requires approval",
-            f"Tool: {req.sender}",
-            f"Action: {req.action}",
+            "⚠️ 操作需要审批",
+            f"工具: {req.sender}",
+            f"操作: {req.action}",
         ]
         if req.description:
             display_lines.append(req.description)
-        display_lines.append("\nReply 'yes' to approve or 'no' to reject.")
-        await self._send("\n".join(display_lines))
+        text = "\n".join(display_lines)
 
-        reply = await self._wait_for_user_reply(timeout=120.0)
-        if reply is None:
-            req.resolve("reject", feedback="Timed out waiting for approval.")
-        elif reply.lower().strip() in ("yes", "y", "approve", "ok", "1"):
-            req.resolve("approve")
+        # Try to use inline keyboard via TelegramAdapter
+        from kimi_cli.ui.im.adapters.telegram import TelegramAdapter
+
+        adapter = self._server.adapter
+        msg_id: int | None = None
+
+        if isinstance(adapter, TelegramAdapter):
+            msg_id = await adapter.send_message_with_keyboard(
+                self._chat_id,
+                text,
+                keyboard=[[("✅ 同意", "approve"), ("❌ 拒绝", "reject")]],
+            )
         else:
-            req.resolve("reject", feedback=reply.strip())
+            display_lines.append("\n回复 'yes' 同意，'no' 拒绝。")
+            await self._send("\n".join(display_lines))
+
+        if msg_id is not None:
+            # Wait for button press via callback
+            loop = asyncio.get_event_loop()
+            result_future: asyncio.Future[tuple[str, str]] = loop.create_future()
+
+            async def on_button(callback_query_id: str, data: str) -> None:
+                if not result_future.done():
+                    result_future.set_result((callback_query_id, data))
+
+            self._server.register_callback_handler(msg_id, on_button)
+
+            try:
+                cq_id, data = await asyncio.wait_for(result_future, timeout=120.0)
+                # Ack the button press (clears spinner)
+                await adapter.answer_callback_query(cq_id)
+                # Remove keyboard from message to prevent re-click
+                if data == "approve":
+                    await self._server.edit_chat_message(
+                        self._chat_id, msg_id, text + "\n\n✅ 已同意", remove_keyboard=True
+                    )
+                    req.resolve("approve")
+                else:
+                    await self._server.edit_chat_message(
+                        self._chat_id,
+                        msg_id,
+                        text + "\n\n❌ 已拒绝，请说明原因（或直接发消息跳过）",
+                        remove_keyboard=True,
+                    )
+                    reason = await self._wait_for_user_reply(timeout=60.0)
+                    req.resolve("reject", feedback=reason or "用户拒绝")
+            except TimeoutError:
+                await self._server.edit_chat_message(
+                    self._chat_id,
+                    msg_id,
+                    text + "\n\n⏰ 审批超时，已自动拒绝",
+                    remove_keyboard=True,
+                )
+                req.resolve("reject", feedback="审批超时")
+        else:
+            # Fallback: text-based approval
+            reply = await self._wait_for_user_reply(timeout=120.0)
+            if reply is None:
+                req.resolve("reject", feedback="审批超时")
+            elif reply.lower().strip() in ("yes", "y", "approve", "ok", "1", "同意"):
+                req.resolve("approve")
+            else:
+                req.resolve("reject", feedback=reply.strip())
 
     async def _handle_question(self, req: QuestionRequest) -> None:
         """Forward a question request to the user and wait for their response."""
