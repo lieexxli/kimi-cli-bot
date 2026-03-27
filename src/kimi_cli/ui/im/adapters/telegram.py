@@ -94,14 +94,48 @@ class TelegramAdapter(IMAdapter):
                 user_id=user_id,
                 text=text[:50],
             )
-            await self._dispatch_message(chat_id, user_id, text)
+            await self._dispatch_message(chat_id, user_id, text, message.message_id)
+
+        from aiogram.filters import Command
+
+        from kimi_cli.ui.im import get_current_im_server
+        from kimi_cli.ui.im.commands import (
+            handle_cancel,
+            handle_help,
+            handle_start,
+            handle_status,
+        )
 
         # Register /start command handler
         @self._dp.message(CommandStart())
-        async def handle_start(message: Message) -> None:  # type: ignore[reportUnusedFunction]
-            await message.answer(
-                "Hello! I'm Kimi Code AI assistant. Send me a message to get started."
-            )
+        async def handle_start_cmd(message: Message) -> None:  # type: ignore[reportUnusedFunction]
+            chat_id = str(message.chat.id)
+            server = get_current_im_server()
+            if server:
+                await handle_start(chat_id, server)
+            else:
+                await message.answer("Hello! I'm Kimi Code AI assistant.")
+
+        @self._dp.message(Command("help"))
+        async def on_help(message: Message) -> None:  # type: ignore[reportUnusedFunction]
+            chat_id = str(message.chat.id)
+            server = get_current_im_server()
+            if server:
+                await handle_help(chat_id, server)
+
+        @self._dp.message(Command("cancel"))
+        async def on_cancel(message: Message) -> None:  # type: ignore[reportUnusedFunction]
+            chat_id = str(message.chat.id)
+            server = get_current_im_server()
+            if server:
+                await handle_cancel(chat_id, server)
+
+        @self._dp.message(Command("status"))
+        async def on_status(message: Message) -> None:  # type: ignore[reportUnusedFunction]
+            chat_id = str(message.chat.id)
+            server = get_current_im_server()
+            if server:
+                await handle_status(chat_id, server)
 
         # Register callback_query handler
         @self._dp.callback_query()
