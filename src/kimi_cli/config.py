@@ -174,8 +174,12 @@ class IMConfig(BaseModel):
 
     platform: str = Field(default="telegram", description="IM platform: telegram")
     """IM platform type."""
-    token: str = Field(default="", description="Bot token")
+    token: SecretStr | None = Field(default=None, description="Bot token")
     """Bot token for the IM platform."""
+
+    @field_serializer("token", when_used="json")
+    def dump_token(self, v: SecretStr | None) -> str | None:
+        return v.get_secret_value() if v else None
     webhook_url: str | None = Field(default=None, description="Webhook URL (optional)")
     """Webhook URL. If None, uses long polling."""
     webhook_port: int = Field(default=8443, description="Local port for webhook server")
@@ -197,7 +201,7 @@ class IMConfig(BaseModel):
         description="LLM model to use for IM sessions (overrides config default)",
     )
     """LLM model name for IM sessions. None means use the default from config."""
-    default_mode: str = Field(
+    default_mode: Literal["suggest", "auto", "full-auto"] = Field(
         default="suggest",
         description=(
             "Default execution mode: 'suggest' (all actions need approval), "
@@ -222,6 +226,14 @@ class IMConfig(BaseModel):
         description="Mask sensitive values (API keys, tokens) before sending to IM",
     )
     """Whether to apply output masking to all messages sent via IM."""
+    response_language: str | None = Field(
+        default=None,
+        description=(
+            "Language name to inject as a reply-language instruction (e.g. '中文', 'English'). "
+            "None disables the injection entirely."
+        ),
+    )
+    """When set, prepends '[请用<language>回复]' to every user message sent to the AI."""
 
 
 class Config(BaseModel):

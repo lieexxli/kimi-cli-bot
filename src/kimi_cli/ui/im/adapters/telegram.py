@@ -38,7 +38,9 @@ class TelegramAdapter(IMAdapter):
         self._callback_handlers: dict[int, CallbackHandler] = {}
 
     def _get_token(self) -> str:
-        token = self._im_config.token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        token = (
+            self._im_config.token.get_secret_value() if self._im_config.token else ""
+        ) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not token:
             raise RuntimeError(
                 "Telegram bot token not configured. "
@@ -50,6 +52,11 @@ class TelegramAdapter(IMAdapter):
     def register_callback_handler(self, message_id: int, handler: CallbackHandler) -> None:
         """Register a one-shot handler for an inline keyboard button press."""
         self._callback_handlers[message_id] = handler
+
+    @override
+    def unregister_callback_handler(self, message_id: int) -> None:
+        """Remove a pending handler without invoking it (called after timeout)."""
+        self._callback_handlers.pop(message_id, None)
 
     @override
     async def start(self) -> None:

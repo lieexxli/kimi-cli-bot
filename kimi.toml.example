@@ -46,3 +46,6 @@ ack_reaction = ""
 loop_detection_threshold = 5
 # 自动遮蔽输出中的 API Key、Token 等敏感信息
 output_masking_enabled = true
+# 在每条用户消息前注入"请用 XX 回复"指令，留空或删除此行则不注入
+# 示例：response_language = "中文"
+# response_language = ""

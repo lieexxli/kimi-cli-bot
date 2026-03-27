@@ -85,3 +85,53 @@ def test_loop_detection_counter_clears_after_turn():
     session._check_and_update_loop_counter("bash")
     session._reset_loop_counter()
     assert session._check_and_update_loop_counter("bash") is False
+
+
+# ---------------------------------------------------------------------------
+# _split_message tests
+# ---------------------------------------------------------------------------
+
+from kimi_cli.ui.im.session import _split_message  # noqa: E402
+
+
+def test_split_message_short_returns_single_chunk():
+    text = "Hello, world!"
+    assert _split_message(text, max_chars=100) == [text]
+
+
+def test_split_message_exact_limit_returns_single_chunk():
+    text = "a" * 100
+    assert _split_message(text, max_chars=100) == [text]
+
+
+def test_split_message_splits_on_newline():
+    # Two lines, each under limit, but together over it
+    line_a = "a" * 60 + "\n"
+    line_b = "b" * 60 + "\n"
+    chunks = _split_message(line_a + line_b, max_chars=100)
+    assert len(chunks) == 2
+    assert chunks[0] == line_a
+    assert chunks[1] == line_b
+
+
+def test_split_message_hard_splits_oversized_line():
+    # Single line longer than max_chars — must be hard-split
+    text = "x" * 250
+    chunks = _split_message(text, max_chars=100)
+    assert len(chunks) == 3
+    assert all(len(c) <= 100 for c in chunks)
+    assert "".join(chunks) == text
+
+
+def test_split_message_preserves_content():
+    text = "line1\nline2\nline3\n"
+    chunks = _split_message(text, max_chars=8)
+    assert "".join(chunks) == text
+
+
+def test_split_message_unicode_not_truncated():
+    # Chinese characters: each is 1 char but potentially multi-byte
+    text = "你好世界\n" * 20
+    chunks = _split_message(text, max_chars=20)
+    assert "".join(chunks) == text
+    assert all(len(c) <= 20 for c in chunks)

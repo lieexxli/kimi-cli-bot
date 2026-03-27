@@ -622,6 +622,8 @@ def kimi(
                     case "im":
                         if prompt is not None:
                             logger.warning("IM bot ignores prompt argument")
+                        from pydantic import SecretStr
+
                         from kimi_cli.config import IMConfig
 
                         # Base: config file's [im] section (if present), fallback to defaults
@@ -633,7 +635,7 @@ def kimi(
                                 k: v
                                 for k, v in {
                                     "platform": im_platform or None,
-                                    "token": im_token or None,
+                                    "token": SecretStr(im_token) if im_token else None,
                                     "webhook_port": _port,
                                     "allowed_chat_ids": _allowed,
                                     "work_dir": str(local_work_dir) if local_work_dir else None,

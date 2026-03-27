@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from kimi_cli.ui.im._utils import split_message as _split_message
 from kimi_cli.utils.logging import logger
 
 if TYPE_CHECKING:
     from kimi_cli.config import Config, IMConfig
+    from kimi_cli.ui.im.session import IMSession
 
 # Module-level singleton: the currently running IMServer instance.
 # Used by SendIMNotification tool to send messages.
@@ -47,6 +49,11 @@ class IMAdapter(ABC):
 
     def register_callback_handler(self, message_id: int, handler: CallbackHandler) -> None:  # noqa: B027
         """Register a one-shot inline keyboard callback handler for the given message_id.
+        Default implementation is a no-op; override in adapters that support inline keyboards.
+        """
+
+    def unregister_callback_handler(self, message_id: int) -> None:  # noqa: B027
+        """Remove a pending callback handler without invoking it (e.g. after timeout).
         Default implementation is a no-op; override in adapters that support inline keyboards.
         """
 
@@ -103,7 +110,7 @@ class IMServer:
         self._adapter = adapter
         self._im_config = im_config
         self._config = config
-        self._sessions: dict[str, Any] = {}  # chat_id -> IMSession
+        self._sessions: dict[str, IMSession] = {}
 
     @property
     def adapter(self) -> IMAdapter:
@@ -120,21 +127,32 @@ class IMServer:
         """Return the effective model name (IM override or global default)."""
         return self._im_config.model_name or self._config.default_model or "unknown"
 
-    def get_session(self, chat_id: str) -> Any:
+    def get_session(self, chat_id: str) -> IMSession | None:
         """Return the IMSession for *chat_id*, or None if not active."""
         return self._sessions.get(chat_id)
 
     def active_chat_ids(self) -> list[str]:
-        """Return the list of currently active chat IDs."""
-        return list(self._sessions.keys())
+        """Return chat IDs that currently have a turn in progress."""
+        return [cid for cid, s in self._sessions.items() if s._turn_running]
 
     async def send_to_chat(self, chat_id: str, text: str) -> int | None:
-        """Send a message to a chat (SendIMNotification). Returns message_id if available."""
-        return await self._adapter.send_message(chat_id, text)
+        """Send a message to a chat (SendIMNotification). Returns message_id if available.
+
+        Long messages are automatically split to stay within IM platform limits.
+        """
+        chunks = _split_message(text)
+        last_id: int | None = None
+        for chunk in chunks:
+            last_id = await self._adapter.send_message(chat_id, chunk)
+        return last_id
 
     def register_callback_handler(self, message_id: int, handler: CallbackHandler) -> None:
         """Delegate to adapter."""
         self._adapter.register_callback_handler(message_id, handler)
+
+    def unregister_callback_handler(self, message_id: int) -> None:
+        """Remove a pending callback handler (e.g. after approval timeout)."""
+        self._adapter.unregister_callback_handler(message_id)
 
     async def edit_chat_message(
         self, chat_id: str, message_id: int, text: str, remove_keyboard: bool = False
@@ -154,7 +172,7 @@ class IMServer:
                 platform=self._im_config.platform,
             )
             # Block until cancelled
-            await asyncio.get_event_loop().create_future()
+            await asyncio.get_running_loop().create_future()
         except asyncio.CancelledError:
             logger.info("IM server stopping...")
         finally:

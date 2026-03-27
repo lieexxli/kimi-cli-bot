@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from kosong.message import ImageURLPart, TextPart, ThinkPart
 
+from kimi_cli.ui.im._utils import split_message as _split_message
 from kimi_cli.ui.im.masking import mask_output_conditional
 from kimi_cli.utils.logging import logger
 from kimi_cli.wire.types import (
@@ -41,10 +42,6 @@ _IMAGE_CONTENT_TYPES = {
 }
 _URL_RE = re.compile(r"^https?://\S+$")
 
-# Maximum characters per IM message before splitting
-_MAX_MSG_CHARS = 4000
-
-
 async def _maybe_convert_image_url(text: str) -> UserInput:
     """If the message is a bare image URL, return multimodal parts; otherwise return as-is."""
     url = text.strip()
@@ -70,8 +67,7 @@ async def _maybe_convert_image_url(text: str) -> UserInput:
     try:
         import httpx
 
-        loop = asyncio.get_event_loop()
-        resp = await loop.run_in_executor(
+        resp = await asyncio.get_running_loop().run_in_executor(
             None, lambda: httpx.head(url, follow_redirects=True, timeout=5)
         )
         content_type = resp.headers.get("content-type", "").split(";")[0].strip()
@@ -83,18 +79,6 @@ async def _maybe_convert_image_url(text: str) -> UserInput:
     except Exception:
         pass
     return text
-
-
-def _split_message(text: str, max_chars: int = _MAX_MSG_CHARS) -> list[str]:
-    """Split a long message into chunks that fit within IM limits."""
-    if len(text) <= max_chars:
-        return [text]
-    chunks: list[str] = []
-    while text:
-        chunk = text[:max_chars]
-        chunks.append(chunk)
-        text = text[max_chars:]
-    return chunks
 
 
 class IMSession:
@@ -124,6 +108,8 @@ class IMSession:
         self._turn_running = False
         # Current turn's cancel event; None when no turn is running
         self._current_cancel: asyncio.Event | None = None
+        # Keep a reference to the running turn task to prevent GC and surface exceptions
+        self._current_task: asyncio.Task | None = None
         # Loop detection: tracks consecutive calls to the same tool
         self._loop_last_tool: str | None = None
         self._loop_consecutive: int = 0
@@ -135,8 +121,15 @@ class IMSession:
     async def handle_message(self, text: UserInput, *, message_id: int | None = None) -> None:
         """Called when the user sends a message.
 
-        Immediately sends ack feedback (typing action + reaction), then queues the message.
+        Enqueues the message and schedules a turn before any awaits to avoid
+        a race where two concurrent callers both see _turn_running=False.
+        Ack feedback is sent afterwards (order doesn't matter to the user).
         """
+        # Enqueue and schedule BEFORE any await — keeps the check atomic in asyncio
+        self._message_queue.put_nowait(text)
+        if not self._turn_running:
+            self._schedule_next_turn()
+
         # Ack feedback: typing indicator
         with contextlib.suppress(Exception):
             await self._server.adapter.send_chat_action(self._chat_id, "typing")
@@ -151,9 +144,21 @@ class IMSession:
                     self._chat_id, message_id, self._im_config.ack_reaction
                 )
 
-        await self._message_queue.put(text)
-        if not self._turn_running:
-            asyncio.create_task(self._run_next_turn())
+    def _schedule_next_turn(self) -> None:
+        """Create a task for _run_next_turn and keep a reference to surface exceptions."""
+        task = asyncio.create_task(self._run_next_turn())
+        self._current_task = task
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._current_task = None
+            if not t.cancelled() and (exc := t.exception()) is not None:
+                logger.error(
+                    "Unhandled exception in IM turn task for chat_id={chat_id}",
+                    chat_id=self._chat_id,
+                    exc_info=exc,
+                )
+
+        task.add_done_callback(_on_done)
 
     async def cancel_current_turn(self) -> None:
         """Cancel the currently running turn, if any."""
@@ -194,9 +199,10 @@ class IMSession:
             )
         finally:
             self._turn_running = False
+            self._current_task = None
             # If more messages are queued, process the next one
             if not self._message_queue.empty():
-                asyncio.create_task(self._run_next_turn())
+                self._schedule_next_turn()
 
     async def _get_kimi(self) -> KimiCLI:
         """Lazily create or return the existing KimiCLI instance for this session."""
@@ -264,20 +270,21 @@ class IMSession:
         if isinstance(user_input, str) and user_input.startswith("!"):
             await self._run_shell_passthrough(user_input[1:].strip())
             return
-        original_text = user_input if isinstance(user_input, str) else None
         # /new is an IM-friendly alias for /clear (text only)
-        if isinstance(user_input, str) and user_input.strip().lower() in ("/new", "/new "):
+        if isinstance(user_input, str) and user_input.strip().lower() == "/new":
             user_input = "/clear"
         # If the message is a bare URL pointing to an image, dispatch it as an image
         elif isinstance(user_input, str):
             user_input = await _maybe_convert_image_url(user_input)
-        # Inject language instruction into every turn
-        if isinstance(user_input, str) and not user_input.startswith("/"):
-            user_input = f"[请用中文回复]\n{user_input}"
-        elif isinstance(user_input, list):
-            from kosong.message import TextPart as _TextPart
+        # Optionally inject a language instruction when response_language is configured
+        lang = self._im_config.response_language
+        if lang:
+            if isinstance(user_input, str) and not user_input.startswith("/"):
+                user_input = f"[请用{lang}回复]\n{user_input}"
+            elif isinstance(user_input, list):
+                from kosong.message import TextPart as _TextPart
 
-            user_input = [_TextPart(text="[请用中文回复]")] + list(user_input)
+                user_input = [_TextPart(text=f"[请用{lang}回复]")] + list(user_input)
         try:
             kimi = await self._get_kimi()
         except Exception:
@@ -372,13 +379,6 @@ class IMSession:
             cancel_event.set()
             await self._send("[已取消]")
         except Exception as e:
-            from kosong.chat_provider import APIEmptyResponseError
-
-            if isinstance(e, APIEmptyResponseError) and original_text:
-                # Gemini returned empty — treat input as a shell command passthrough
-                logger.debug("Empty AI response, falling back to shell: {cmd}", cmd=original_text)
-                await self._run_shell_passthrough(original_text.strip())
-                return
             logger.exception("Error during IM AI turn for chat_id={chat_id}", chat_id=self._chat_id)
             if text_buffer:
                 masked = mask_output_conditional(
@@ -424,14 +424,8 @@ class IMSession:
             result_future: asyncio.Future[tuple[str, str]] = (
                 asyncio.get_running_loop().create_future()
             )
-            timed_out = False
 
             async def on_button(callback_query_id: str, data: str) -> None:
-                if timed_out:
-                    # Turn already rejected; ack the late press with an expired notice
-                    if isinstance(adapter, TelegramAdapter):
-                        await adapter.answer_callback_query(callback_query_id, "已过期，请重新操作")
-                    return
                 if not result_future.done():
                     result_future.set_result((callback_query_id, data))
 
@@ -457,7 +451,7 @@ class IMSession:
                     reason = await self._wait_for_user_reply(timeout=60.0)
                     req.resolve("reject", feedback=reason or "用户拒绝")
             except TimeoutError:
-                timed_out = True
+                self._server.unregister_callback_handler(msg_id)
                 await self._server.edit_chat_message(
                     self._chat_id,
                     msg_id,
