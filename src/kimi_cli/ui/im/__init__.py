@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from kimi_cli.utils.logging import logger
@@ -31,6 +31,9 @@ UserInput = Any  # str | list[ContentPart]
 OnMessageCallback = Callable[[str, str, UserInput], Coroutine[Any, Any, None]]
 """Callback type: (chat_id, user_id, text_or_parts) -> None"""
 
+CallbackHandler = Callable[[str, str], Awaitable[None]]
+"""Inline keyboard callback: (callback_query_id, callback_data) -> None"""
+
 
 class IMAdapter(ABC):
     """Abstract base class for IM platform adapters."""
@@ -41,6 +44,11 @@ class IMAdapter(ABC):
     def set_on_message_callback(self, callback: OnMessageCallback) -> None:
         """Register the callback to be called when a message is received."""
         self._on_message = callback
+
+    def register_callback_handler(self, message_id: int, handler: CallbackHandler) -> None:  # noqa: B027
+        """Register a one-shot inline keyboard callback handler for the given message_id.
+        Default implementation is a no-op; override in adapters that support inline keyboards.
+        """
 
     async def _dispatch_message(self, chat_id: str, user_id: str, text: UserInput) -> None:
         """Called by subclasses to dispatch an incoming message (text or multimodal parts)."""
@@ -56,8 +64,24 @@ class IMAdapter(ABC):
         """Stop the adapter and clean up resources."""
 
     @abstractmethod
-    async def send_message(self, chat_id: str, text: str) -> None:
-        """Send a text message to the given chat/user."""
+    async def send_message(self, chat_id: str, text: str) -> int | None:
+        """Send a text message to the given chat/user. Returns message_id if available."""
+
+    @abstractmethod
+    async def edit_message(
+        self, chat_id: str, message_id: int, text: str, remove_keyboard: bool = False
+    ) -> None:
+        """Edit a previously sent message (used for streaming output).
+        remove_keyboard=True removes inline keyboard from the message.
+        """
+
+    @abstractmethod
+    async def send_chat_action(self, chat_id: str, action: str = "typing") -> None:
+        """Send a chat action indicator (e.g. typing...)."""
+
+    @abstractmethod
+    async def answer_callback_query(self, callback_query_id: str, text: str = "") -> None:
+        """Acknowledge an inline keyboard button press (clears the loading spinner)."""
 
 
 class IMServer:
@@ -83,9 +107,13 @@ class IMServer:
         """Return the list of currently active chat IDs."""
         return list(self._sessions.keys())
 
-    async def send_to_chat(self, chat_id: str, text: str) -> None:
-        """Send a message to a specific chat. Used by SendIMNotification tool."""
-        await self._adapter.send_message(chat_id, text)
+    async def send_to_chat(self, chat_id: str, text: str) -> int | None:
+        """Send a message to a chat (SendIMNotification). Returns message_id if available."""
+        return await self._adapter.send_message(chat_id, text)
+
+    def register_callback_handler(self, message_id: int, handler: CallbackHandler) -> None:
+        """Delegate to adapter."""
+        self._adapter.register_callback_handler(message_id, handler)
 
     async def run(self) -> None:
         """Start the IM server and block until cancelled."""

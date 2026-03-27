@@ -190,13 +190,29 @@ class TelegramAdapter(IMAdapter):
             logger.exception("Error stopping Telegram adapter")
 
     @override
-    async def send_message(self, chat_id: str, text: str) -> None:
+    async def send_message(self, chat_id: str, text: str) -> int | None:
         if self._bot is None:
             logger.warning("Cannot send Telegram message: bot not started")
-            return
+            return None
         try:
-            await self._bot.send_message(chat_id=int(chat_id), text=text)
+            msg = await self._bot.send_message(chat_id=int(chat_id), text=text)
+            return msg.message_id
         except Exception:
             logger.exception(
                 "Failed to send Telegram message to chat_id={chat_id}", chat_id=chat_id
             )
+            return None
+
+    @override
+    async def edit_message(
+        self, chat_id: str, message_id: int, text: str, remove_keyboard: bool = False
+    ) -> None:
+        """Edit a previously sent message. Implemented in Task 3."""
+
+    @override
+    async def send_chat_action(self, chat_id: str, action: str = "typing") -> None:
+        """Send a chat action indicator. Implemented in Task 3."""
+
+    @override
+    async def answer_callback_query(self, callback_query_id: str, text: str = "") -> None:
+        """Acknowledge an inline keyboard button press. Implemented in Task 3."""
