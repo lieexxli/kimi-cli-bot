@@ -269,7 +269,7 @@ class IMSession:
         await self._send_placeholder("⌛ 思考中...")
 
         try:
-            async for msg in kimi.run(user_input, cancel_event, merge_wire_messages=True):  # type: ignore[arg-type]
+            async for msg in kimi.run(user_input, cancel_event, merge_wire_messages=False):  # type: ignore[arg-type]
                 match msg:
                     case ContentPart() as cp:
                         if isinstance(cp, ThinkPart):
