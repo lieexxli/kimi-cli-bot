@@ -192,6 +192,31 @@ class IMConfig(BaseModel):
         description="LLM model to use for IM sessions (overrides config default)",
     )
     """LLM model name for IM sessions. None means use the default from config."""
+    admin_chat_ids: list[str] = Field(
+        default_factory=list,
+        description="Admin chat IDs: get full-auto mode regardless of default_mode",
+    )
+    """Admins bypass default_mode and rate limits (but NOT loop detection or output masking)."""
+    default_mode: str = Field(
+        default="suggest",
+        description="Default execution mode: 'suggest' (approval required) or 'full-auto' (yolo)",
+    )
+    """Execution mode for non-admin users. 'suggest' = yolo=False, 'full-auto' = yolo=True."""
+    ack_reaction: str = Field(
+        default="👀",
+        description="Emoji reaction to set when a message is received. Empty string to disable.",
+    )
+    """Reaction emoji to acknowledge received messages. Set to '' to disable."""
+    loop_detection_threshold: int = Field(
+        default=5,
+        description="Cancel turn if the same tool is called this many times consecutively",
+    )
+    """Loop detection: cancel if same tool called >= this many times in a row."""
+    output_masking_enabled: bool = Field(
+        default=True,
+        description="Mask sensitive values (API keys, tokens) before sending to IM",
+    )
+    """Whether to apply output masking to all messages sent via IM."""
 
 
 class Config(BaseModel):
