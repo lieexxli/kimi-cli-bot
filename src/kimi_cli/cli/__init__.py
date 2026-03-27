@@ -624,15 +624,25 @@ def kimi(
                             logger.warning("IM bot ignores prompt argument")
                         from kimi_cli.config import IMConfig
 
-                        _im_cfg = IMConfig(
-                            platform=im_platform or "telegram",
-                            token=im_token or "",
-                            webhook_port=im_webhook_port,
-                            allowed_chat_ids=list(im_allowed_chat_ids or []),
-                            work_dir=str(local_work_dir or "."),
-                            model_name=im_model or model_name,
+                        # Base: config file's [im] section (if present), fallback to defaults
+                        _loaded_cfg = instance._runtime.config  # type: ignore[reportPrivateUsage]
+                        _allowed = list(im_allowed_chat_ids) if im_allowed_chat_ids else None
+                        _port = im_webhook_port if im_webhook_port != 8443 else None
+                        _im_cfg = (_loaded_cfg.im or IMConfig()).model_copy(
+                            update={
+                                k: v
+                                for k, v in {
+                                    "platform": im_platform or None,
+                                    "token": im_token or None,
+                                    "webhook_port": _port,
+                                    "allowed_chat_ids": _allowed,
+                                    "work_dir": str(local_work_dir) if local_work_dir else None,
+                                    "model_name": im_model or model_name or None,
+                                }.items()
+                                if v is not None
+                            }
                         )
-                        await instance.run_im(im_platform or "telegram", _im_cfg)
+                        await instance.run_im(_im_cfg.platform, _im_cfg)
                         exit_code = ExitCode.SUCCESS
             except Reload as e:
                 preserve_background_tasks = True

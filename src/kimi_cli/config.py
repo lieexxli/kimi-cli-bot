@@ -253,6 +253,7 @@ class Config(BaseModel):
     )
     services: Services = Field(default_factory=Services, description="Services configuration")
     mcp: MCPConfig = Field(default_factory=MCPConfig, description="MCP configuration")
+    im: IMConfig | None = Field(default=None, description="IM bot configuration")
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
