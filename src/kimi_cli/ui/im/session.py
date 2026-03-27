@@ -102,6 +102,28 @@ _SHELL_COMMANDS = {
 }
 
 
+def _translate_for_powershell(command: str) -> str:
+    """Translate common Unix command patterns to PowerShell equivalents."""
+    parts = command.strip().split(None, 1)
+    if not parts:
+        return command
+    cmd, rest = parts[0].lower(), parts[1] if len(parts) > 1 else ""
+
+    # curl → curl.exe (avoid Invoke-WebRequest alias which fails in some modes)
+    if cmd == "curl":
+        return f"curl.exe {rest}".strip()
+
+    # ls: strip Unix-only flags, add -Force for hidden files
+    if cmd == "ls":
+        # Remove Unix flags (-a, -l, -al, -la, etc.), keep paths
+        args = rest.split() if rest else []
+        paths = [a for a in args if not a.startswith("-")]
+        target = " ".join(paths) if paths else "."
+        return f"ls -Force {target}".strip()
+
+    return command
+
+
 def _looks_like_shell_command(text: str) -> bool:
     """Return True if the text looks like a shell command invocation."""
     stripped = text.strip()
@@ -653,22 +675,29 @@ class IMSession:
         if not command:
             await self._send("用法: !<命令>  例如: !pwd")
             return
+
+        from pathlib import Path
+
+        # Run in the session's work directory so pwd/ls reflect the right context
+        base = Path(self._im_config.work_dir).expanduser().resolve()
+        work_dir = base / "sessions" / self._chat_id
+        work_dir.mkdir(parents=True, exist_ok=True)
+
         try:
             if sys.platform == "win32":
-                # Force UTF-8 output from PowerShell
+                command = _translate_for_powershell(command)
                 ps_command = f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
-                args = ["powershell.exe", "-NonInteractive", "-command", ps_command]
-                encoding = "utf-8"
+                args = ["powershell.exe", "-command", ps_command]
             else:
                 args = ["/bin/bash", "-c", command]
-                encoding = "utf-8"
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                cwd=str(work_dir),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-            output = stdout.decode(encoding, errors="replace").strip()
+            output = stdout.decode("utf-8", errors="replace").strip()
             if output:
                 await self._send(f"```\n{output}\n```")
             else:
