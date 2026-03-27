@@ -231,5 +231,5 @@ class Shell(CallableTool2[Params]):
 
     def _shell_args(self, command: str) -> tuple[str, ...]:
         if self._is_powershell:
-            return (str(self._shell_path), "-command", command)
+            return (str(self._shell_path), "-NonInteractive", "-command", command)
         return (str(self._shell_path), "-c", command)
