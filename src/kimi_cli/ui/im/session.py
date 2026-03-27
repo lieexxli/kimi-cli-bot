@@ -24,6 +24,97 @@ from kimi_cli.wire.types import (
 
 UserInput = str | list[ContentPart]
 
+# Common shell commands that should bypass AI and run directly.
+_SHELL_COMMANDS = {
+    # filesystem
+    "ls",
+    "dir",
+    "pwd",
+    "cd",
+    "mkdir",
+    "rmdir",
+    "rm",
+    "cp",
+    "mv",
+    "cat",
+    "head",
+    "tail",
+    "touch",
+    "find",
+    "tree",
+    "du",
+    "df",
+    # network
+    "curl",
+    "curl.exe",
+    "wget",
+    "ping",
+    "nslookup",
+    "tracert",
+    "ipconfig",
+    "ifconfig",
+    "netstat",
+    "ssh",
+    "scp",
+    # system
+    "ps",
+    "top",
+    "whoami",
+    "hostname",
+    "uname",
+    "date",
+    "uptime",
+    "free",
+    "kill",
+    "which",
+    "where",
+    "type",
+    # dev
+    "git",
+    "python",
+    "python3",
+    "pip",
+    "pip3",
+    "node",
+    "npm",
+    "go",
+    "cargo",
+    "java",
+    "mvn",
+    # text
+    "grep",
+    "sed",
+    "awk",
+    "sort",
+    "uniq",
+    "wc",
+    "diff",
+    "echo",
+    # windows-specific
+    "get-childitem",
+    "get-content",
+    "set-location",
+    "copy-item",
+    "move-item",
+    "remove-item",
+    "new-item",
+    "invoke-webrequest",
+}
+
+
+def _looks_like_shell_command(text: str) -> bool:
+    """Return True if the text looks like a shell command invocation."""
+    stripped = text.strip()
+    # Must be ASCII only (no Chinese/other natural language chars)
+    if not stripped.isascii():
+        return False
+    # Must not look like a question or sentence
+    if stripped.endswith("?") or stripped.endswith(".") or stripped.endswith("!"):
+        return False
+    first_word = stripped.split()[0].lower() if stripped.split() else ""
+    return first_word in _SHELL_COMMANDS
+
+
 if TYPE_CHECKING:
     from kimi_cli.app import KimiCLI
     from kimi_cli.config import Config, IMConfig
@@ -259,9 +350,12 @@ class IMSession:
 
     async def _run_turn(self, user_input: UserInput) -> None:
         """Run one AI turn and send the response back via IM."""
-        # ! prefix: run shell command directly, bypass AI
+        # ! prefix or shell-like command: run directly, bypass AI
         if isinstance(user_input, str) and user_input.startswith("!"):
             await self._run_shell_passthrough(user_input[1:].strip())
+            return
+        if isinstance(user_input, str) and _looks_like_shell_command(user_input):
+            await self._run_shell_passthrough(user_input.strip())
             return
         original_text = user_input if isinstance(user_input, str) else None
         # /new is an IM-friendly alias for /clear (text only)
