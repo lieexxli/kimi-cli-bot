@@ -67,35 +67,6 @@ class TelegramAdapter(IMAdapter):
         self._bot = Bot(token=token)
         self._dp = Dispatcher()
 
-        # Register message handler
-        @self._dp.message()
-        async def handle_message(message: Message) -> None:  # type: ignore[reportUnusedFunction]
-            chat_id = str(message.chat.id)
-            user_id = str(message.from_user.id) if message.from_user else chat_id
-
-            if message.photo:
-                # Highest resolution is last in the list
-                photo = message.photo[-1]
-                caption = message.caption or ""
-                logger.debug(
-                    "Telegram photo from chat={chat_id}: file_id={fid}",
-                    chat_id=chat_id,
-                    fid=photo.file_id,
-                )
-                await self._dispatch_photo(chat_id, user_id, photo.file_id, caption)
-                return
-
-            if message.text is None:
-                return
-            text = message.text
-            logger.debug(
-                "Telegram message from chat={chat_id} user={user_id}: {text}",
-                chat_id=chat_id,
-                user_id=user_id,
-                text=text[:50],
-            )
-            await self._dispatch_message(chat_id, user_id, text, message.message_id)
-
         from aiogram.filters import Command
 
         from kimi_cli.ui.im import get_current_im_server
@@ -106,7 +77,8 @@ class TelegramAdapter(IMAdapter):
             handle_status,
         )
 
-        # Register /start command handler
+        # Register command handlers FIRST — aiogram matches in registration order,
+        # so these must come before the catch-all @self._dp.message() handler.
         @self._dp.message(CommandStart())
         async def handle_start_cmd(message: Message) -> None:  # type: ignore[reportUnusedFunction]
             chat_id = str(message.chat.id)
@@ -136,6 +108,35 @@ class TelegramAdapter(IMAdapter):
             server = get_current_im_server()
             if server:
                 await handle_status(chat_id, server)
+
+        # Catch-all message handler — must be registered AFTER command handlers
+        @self._dp.message()
+        async def handle_message(message: Message) -> None:  # type: ignore[reportUnusedFunction]
+            chat_id = str(message.chat.id)
+            user_id = str(message.from_user.id) if message.from_user else chat_id
+
+            if message.photo:
+                # Highest resolution is last in the list
+                photo = message.photo[-1]
+                caption = message.caption or ""
+                logger.debug(
+                    "Telegram photo from chat={chat_id}: file_id={fid}",
+                    chat_id=chat_id,
+                    fid=photo.file_id,
+                )
+                await self._dispatch_photo(chat_id, user_id, photo.file_id, caption)
+                return
+
+            if message.text is None:
+                return
+            text = message.text
+            logger.debug(
+                "Telegram message from chat={chat_id} user={user_id}: {text}",
+                chat_id=chat_id,
+                user_id=user_id,
+                text=text[:50],
+            )
+            await self._dispatch_message(chat_id, user_id, text, message.message_id)
 
         # Register callback_query handler
         @self._dp.callback_query()
