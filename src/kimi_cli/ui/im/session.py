@@ -152,8 +152,15 @@ class IMSession:
     async def handle_message(self, text: UserInput, *, message_id: int | None = None) -> None:
         """Called when the user sends a message.
 
-        Immediately sends ack feedback (typing action + reaction), then queues the message.
+        Enqueues the message and schedules a turn before any awaits to avoid
+        a race where two concurrent callers both see _turn_running=False.
+        Ack feedback is sent afterwards (order doesn't matter to the user).
         """
+        # Enqueue and schedule BEFORE any await — keeps the check atomic in asyncio
+        self._message_queue.put_nowait(text)
+        if not self._turn_running:
+            self._schedule_next_turn()
+
         # Ack feedback: typing indicator
         with contextlib.suppress(Exception):
             await self._server.adapter.send_chat_action(self._chat_id, "typing")
@@ -167,10 +174,6 @@ class IMSession:
                 await adapter.set_message_reaction(
                     self._chat_id, message_id, self._im_config.ack_reaction
                 )
-
-        await self._message_queue.put(text)
-        if not self._turn_running:
-            self._schedule_next_turn()
 
     def _schedule_next_turn(self) -> None:
         """Create a task for _run_next_turn and keep a reference to surface exceptions."""
@@ -299,7 +302,7 @@ class IMSession:
             await self._run_shell_passthrough(user_input[1:].strip())
             return
         # /new is an IM-friendly alias for /clear (text only)
-        if isinstance(user_input, str) and user_input.strip().lower() in ("/new", "/new "):
+        if isinstance(user_input, str) and user_input.strip().lower() == "/new":
             user_input = "/clear"
         # If the message is a bare URL pointing to an image, dispatch it as an image
         elif isinstance(user_input, str):

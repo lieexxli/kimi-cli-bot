@@ -16,6 +16,7 @@ from kimi_cli.utils.logging import logger
 
 if TYPE_CHECKING:
     from kimi_cli.config import Config, IMConfig
+    from kimi_cli.ui.im.session import IMSession
 
 # Module-level singleton: the currently running IMServer instance.
 # Used by SendIMNotification tool to send messages.
@@ -108,7 +109,7 @@ class IMServer:
         self._adapter = adapter
         self._im_config = im_config
         self._config = config
-        self._sessions: dict[str, Any] = {}  # chat_id -> IMSession
+        self._sessions: dict[str, IMSession] = {}
 
     @property
     def adapter(self) -> IMAdapter:
