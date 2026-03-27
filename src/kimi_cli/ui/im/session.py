@@ -231,18 +231,21 @@ class IMSession:
             effective_mode = "full-auto" if is_admin else self._im_config.default_mode
             yolo = effective_mode == "full-auto"
 
+            # Actions controlled by the IM mode config (not user-explicit approvals).
+            _MODE_ACTIONS = {
+                "read file",
+                "edit file",
+                "stop background task",
+                "run command",
+                "run background command",
+            }
             if effective_mode == "auto":
                 # Auto-approve everything except edits outside the working directory.
-                # Shell commands have no per-command risk classification, so approve all.
-                _AUTO_ACTIONS = {
-                    "read file",
-                    "edit file",
-                    "stop background task",
-                    "run command",
-                    "run background command",
-                }
-                session.state.approval.auto_approve_actions |= _AUTO_ACTIONS
-                session.save_state()
+                session.state.approval.auto_approve_actions |= _MODE_ACTIONS
+            else:
+                # suggest / full-auto: clear any previously persisted mode-derived approvals.
+                session.state.approval.auto_approve_actions -= _MODE_ACTIONS
+            session.save_state()
 
             self._kimi = await KimiCLI.create(
                 session,
