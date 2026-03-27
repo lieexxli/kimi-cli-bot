@@ -16,6 +16,7 @@ from kimi_cli.wire.types import (
     ApprovalRequest,
     ContentPart,
     QuestionRequest,
+    ToolCallRequest,
     TurnEnd,
 )
 
@@ -331,6 +332,14 @@ class IMSession:
                                 await self._send(masked)
                             text_buffer.clear()
                         await self._handle_question(req)
+
+                    case ToolCallRequest() as tool_call:
+                        if self._check_and_update_loop_counter(tool_call.name):
+                            await self._send(
+                                f"⚠️ 循环检测：工具 {tool_call.name!r} 连续调用 "
+                                f"{self._im_config.loop_detection_threshold} 次，已自动停止。"
+                            )
+                            cancel_event.set()
 
                     case _:
                         pass
