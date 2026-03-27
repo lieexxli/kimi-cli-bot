@@ -44,7 +44,9 @@ def test_cancel_event_is_none_initially():
 async def test_cancel_when_no_turn_running_sends_message():
     session = _make_session()
     await session.cancel_current_turn()
-    session._server.send_to_chat.assert_called_once_with("test_chat", "当前没有正在运行的任务。")
+    session._server.send_to_chat.assert_called_once_with(  # type: ignore[union-attr]
+        "test_chat", "当前没有正在运行的任务。"
+    )
 
 
 @pytest.mark.asyncio

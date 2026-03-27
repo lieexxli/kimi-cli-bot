@@ -240,9 +240,7 @@ class TelegramAdapter(IMAdapter):
                 for row in keyboard
             ]
             markup = InlineKeyboardMarkup(inline_keyboard=buttons)
-            msg = await self._bot.send_message(
-                chat_id=int(chat_id), text=text, reply_markup=markup
-            )
+            msg = await self._bot.send_message(chat_id=int(chat_id), text=text, reply_markup=markup)
             return msg.message_id
         except Exception:
             logger.exception(
@@ -280,9 +278,7 @@ class TelegramAdapter(IMAdapter):
         try:
             await self._bot.send_chat_action(chat_id=int(chat_id), action=action)  # type: ignore[arg-type]
         except Exception:
-            logger.exception(
-                "Failed to send chat action to chat_id={chat_id}", chat_id=chat_id
-            )
+            logger.exception("Failed to send chat action to chat_id={chat_id}", chat_id=chat_id)
 
     @override
     async def answer_callback_query(self, callback_query_id: str, text: str = "") -> None:
@@ -294,23 +290,20 @@ class TelegramAdapter(IMAdapter):
                 text=text or None,
             )
         except Exception:
-            logger.exception(
-                "Failed to answer callback_query {cqid}", cqid=callback_query_id
-            )
+            logger.exception("Failed to answer callback_query {cqid}", cqid=callback_query_id)
 
-    async def set_message_reaction(
-        self, chat_id: str, message_id: int, emoji: str
-    ) -> None:
+    async def set_message_reaction(self, chat_id: str, message_id: int, emoji: str) -> None:
         """Set an emoji reaction on a message (Bot API 7.0+). Silently ignores errors."""
         if self._bot is None:
             return
         try:
+            from aiogram.enums import ReactionTypeType
             from aiogram.types import ReactionTypeEmoji
 
             await self._bot.set_message_reaction(
                 chat_id=int(chat_id),
                 message_id=message_id,
-                reaction=[ReactionTypeEmoji(type="emoji", emoji=emoji)],
+                reaction=[ReactionTypeEmoji(type=ReactionTypeType.EMOJI, emoji=emoji)],
             )
         except Exception:
             logger.debug(
