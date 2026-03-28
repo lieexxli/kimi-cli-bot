@@ -1,7 +1,7 @@
 # kimi-cli-bot 产品与开发规划
 
 **日期**: 2026-03-27
-**更新**: 2026-03-27（Phase 0+1 完成）
+**更新**: 2026-03-28（Phase 0+1+2a 完成）
 **项目**: kimi-cli-bot（kimi-cli Telegram Bot 扩展）
 **参考项目**: OpenClaw、Codex、Gemini CLI、Claude Code（anthropics/claude-plugins-official/telegram）
 
@@ -37,6 +37,29 @@ Phase 0（适配器接口改造）和 Phase 1（体验基线）已全部完成�
 - **新增 `!` shell 直通**：让用户可以不经过 AI 直接执行命令，与 CLI 的 `!` 行为一致
 - **`suggest` 模式 session state 修复**：`auto` 模式写入 `auto_approve_actions` 会持久化，切回 `suggest` 需要显式清除
 - **流式输出去掉了"思考中"占位**：第一个 chunk 到达时直接发消息，避免多余的等待提示
+
+---
+
+## Wire 事件对齐记录（2026-03-28）
+
+代码审查发现 Phase 0+1 的 `case _: pass` 遗漏了若干 Wire 事件，导致 IM 与 CLI 体验不对齐。已修复：
+
+| Wire 事件 | 之前 | 修复后 |
+|-----------|------|--------|
+| `CompactionEnd` | 静默丢弃 | 发送 "📦 历史对话已自动压缩" 通知 |
+| `PlanDisplay` | 静默丢弃（`/plan` 命令完全无效） | 发送计划内容到 IM |
+| `Notification` | 静默丢弃（系统通知丢失） | 按 severity 前缀发送给用户 |
+| `StatusUpdate` | 静默丢弃 | 累积存储在 `_last_status`，`/status` 命令可读取 |
+| `/status` 命令 | 仅显示版本/会话数/模型 | 新增上下文 token 用量和 plan 模式状态 |
+
+**未处理（设计决策）**：
+
+| Wire 事件 | 理由 |
+|-----------|------|
+| `SteerInput` | 需要 mid-turn 输入注入架构，IM 消息队列不支持；低优先级 |
+| `MCPLoadingBegin/End` | 瞬态状态，在手机消息流里发送会产生噪音 |
+| `CompactionBegin` | 只发 End 通知已够，Begin 是多余的中间状态 |
+| `SubagentEvent` | 子 agent 的输出会通过主 agent 的 TextPart 汇总，不需要单独展示 |
 
 
 

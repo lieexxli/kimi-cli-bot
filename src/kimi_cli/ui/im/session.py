@@ -17,8 +17,12 @@ from kimi_cli.ui.im.masking import mask_output_conditional
 from kimi_cli.utils.logging import logger
 from kimi_cli.wire.types import (
     ApprovalRequest,
+    CompactionEnd,
     ContentPart,
+    Notification,
+    PlanDisplay,
     QuestionRequest,
+    StatusUpdate,
     ToolCallRequest,
     TurnEnd,
 )
@@ -117,6 +121,8 @@ class IMSession:
         self._stream_msg_id: int | None = None
         self._stream_last_edit: float = 0.0
         self._stream_edit_interval: float = 0.5  # seconds between edits
+        # Latest status snapshot (context tokens, usage, plan_mode, etc.)
+        self._last_status: StatusUpdate | None = None
 
     async def handle_message(self, text: UserInput, *, message_id: int | None = None) -> None:
         """Called when the user sends a message.
@@ -371,6 +377,49 @@ class IMSession:
                                 f"{self._im_config.loop_detection_threshold} 次，已自动停止。"
                             )
                             cancel_event.set()
+
+                    case StatusUpdate() as status:
+                        # Merge into running snapshot; fields that are None mean "no change"
+                        if self._last_status is None:
+                            self._last_status = status
+                        else:
+                            merged = self._last_status.model_dump()
+                            for k, v in status.model_dump().items():
+                                if v is not None:
+                                    merged[k] = v
+                            self._last_status = StatusUpdate(**merged)
+
+                    case CompactionEnd():
+                        await self._send(
+                            "📦 历史对话已自动压缩（保留最近内容）\n"
+                            "如需完整上下文请用 /clear 开启新对话"
+                        )
+
+                    case PlanDisplay() as plan:
+                        header = f"📋 **Plan** — `{plan.file_path}`"
+                        body = plan.content
+                        # Keep plan message separate from the streaming buffer
+                        if self._stream_msg_id is not None and text_buffer:
+                            full = mask_output_conditional(
+                                "".join(text_buffer),
+                                enabled=self._im_config.output_masking_enabled,
+                            )
+                            await self._update_stream(full, force=True)
+                            self._stream_msg_id = None
+                            text_buffer.clear()
+                        for chunk in _split_message(f"{header}\n\n{body}"):
+                            await self._send(chunk)
+
+                    case Notification() as notif:
+                        severity_prefix = {
+                            "error": "🔴",
+                            "warning": "🟡",
+                            "info": "🔵",
+                        }.get(notif.severity, "ℹ️")
+                        msg_text = f"{severity_prefix} **{notif.title}**"
+                        if notif.body:
+                            msg_text += f"\n{notif.body}"
+                        await self._send(msg_text)
 
                     case _:
                         pass
