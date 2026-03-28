@@ -244,16 +244,6 @@ class IMConfig(BaseModel):
         ),
     )
     """Idle eviction timeout in seconds. Default 30 minutes (1800)."""
-    session_queue_max_size: int = Field(
-        default=10,
-        ge=0,
-        description=(
-            "Maximum number of queued user messages per session. "
-            "Excess messages are rejected with a 'busy' reply. "
-            "0 means unlimited."
-        ),
-    )
-    """Per-session message queue capacity. Default 10."""
 
 
 class Config(BaseModel):

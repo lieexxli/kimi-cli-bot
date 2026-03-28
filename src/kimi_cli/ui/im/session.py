@@ -107,8 +107,7 @@ class IMSession:
         self._config = config
         self._kimi: KimiCLI | None = None
         # Queue of incoming user messages (str or multimodal list[ContentPart])
-        _maxsize = im_config.session_queue_max_size  # 0 = unlimited
-        self._message_queue: asyncio.Queue[UserInput] = asyncio.Queue(maxsize=_maxsize)
+        self._message_queue: asyncio.Queue[UserInput] = asyncio.Queue()
         # Whether a turn is currently running
         self._turn_running = False
         # Current turn's cancel event; None when no turn is running
@@ -135,13 +134,7 @@ class IMSession:
         Ack feedback is sent afterwards (order doesn't matter to the user).
         """
         # Enqueue and schedule BEFORE any await — keeps the check atomic in asyncio
-        try:
-            self._message_queue.put_nowait(text)
-        except asyncio.QueueFull:
-            await self._server.send_to_chat(
-                self._chat_id, "⏳ 消息队列已满，请等待当前任务完成后再发送。"
-            )
-            return
+        self._message_queue.put_nowait(text)
         self._last_activity = time.monotonic()
         if not self._turn_running:
             self._schedule_next_turn()

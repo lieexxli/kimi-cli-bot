@@ -309,12 +309,7 @@ README 增加"安全说明"：
 - `IMServer._idle_cleanup_loop()` 每分钟扫描一次
 - `IMSession._last_activity` 在 `handle_message` 时更新
 
-#### 3.2 队列容量上限 ✅
-
-- 配置：`[im] session_queue_max_size = 10`（0 = 不限）
-- 超限时回复"⏳ 消息队列已满，请等待当前任务完成后再发送。"
-
-#### 3.3 磁盘清理（未做，推迟）
+#### 3.2 磁盘清理（未做，推迟）
 
 - 可配置保留天数：kimi-cli 的 compaction 机制已在 context 超阈值时自动触发，**文件大小触发**无入口，跳过
 - 历史 session 目录定期清理：低优先级，暂不实现
