@@ -266,7 +266,7 @@ class KimiSoul:
             # Compute and persist slug immediately so the path survives process restarts
             from kimi_cli.tools.plan.heroes import get_or_create_slug
 
-            slug = get_or_create_slug(self._plan_session_id)
+            slug = get_or_create_slug(self._plan_session_id, plans_dir=self.plans_dir)
             self._runtime.session.state.plan_slug = slug
             self._runtime.session.save_state()
 
@@ -288,13 +288,18 @@ class KimiSoul:
         self._runtime.session.save_state()
         return self._plan_mode
 
+    @property
+    def plans_dir(self) -> Path:
+        """Per-session plans directory (inside the session work dir)."""
+        return self._runtime.session.work_dir.unsafe_to_local_path() / "plans"
+
     def get_plan_file_path(self) -> Path | None:
         """Get the plan file path for the current session."""
         if self._plan_session_id is None:
             return None
         from kimi_cli.tools.plan.heroes import get_plan_file_path
 
-        return get_plan_file_path(self._plan_session_id)
+        return get_plan_file_path(self._plan_session_id, plans_dir=self.plans_dir)
 
     def read_current_plan(self) -> str | None:
         """Read the current plan file content."""
@@ -302,7 +307,7 @@ class KimiSoul:
             return None
         from kimi_cli.tools.plan.heroes import read_plan_file
 
-        return read_plan_file(self._plan_session_id)
+        return read_plan_file(self._plan_session_id, plans_dir=self.plans_dir)
 
     def clear_current_plan(self) -> None:
         """Delete the current plan file."""

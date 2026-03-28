@@ -78,6 +78,9 @@ async def clear(soul: KimiSoul, args: str):
     logger.info("Running `/clear`")
     await soul.context.clear()
     await soul.context.write_system_prompt(soul.agent.system_prompt)
+    # Reset plan mode if active
+    if soul.plan_mode:
+        await soul.toggle_plan_mode_from_manual()
     wire_send(TextPart(text="The context has been cleared."))
     snap = soul.status
     wire_send(
@@ -85,6 +88,7 @@ async def clear(soul: KimiSoul, args: str):
             context_usage=snap.context_usage,
             context_tokens=snap.context_tokens,
             max_context_tokens=snap.max_context_tokens,
+            plan_mode=soul.plan_mode,
         )
     )
 

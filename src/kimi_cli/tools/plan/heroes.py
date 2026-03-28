@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
-PLANS_DIR = Path.home() / ".kimi" / "plans"
+_DEFAULT_PLANS_DIR = Path.home() / ".kimi" / "plans"
 
 HERO_NAMES: list[str] = [
     # --- Marvel ---
@@ -246,16 +246,17 @@ def seed_slug_cache(session_id: str, slug: str) -> None:
     _slug_cache[session_id] = slug
 
 
-def get_or_create_slug(session_id: str) -> str:
+def get_or_create_slug(session_id: str, plans_dir: Path | None = None) -> str:
     """Get or create a plan file slug for the given session."""
     if session_id in _slug_cache:
         return _slug_cache[session_id]
-    PLANS_DIR.mkdir(parents=True, exist_ok=True)
+    d = plans_dir if plans_dir is not None else _DEFAULT_PLANS_DIR
+    d.mkdir(parents=True, exist_ok=True)
     slug = ""
     for _ in range(20):
         words = [secrets.choice(HERO_NAMES) for _ in range(3)]
         slug = "-".join(words)
-        if not (PLANS_DIR / f"{slug}.md").exists():
+        if not (d / f"{slug}.md").exists():
             break
     else:
         # All 20 attempts collided; append session prefix for uniqueness
@@ -264,14 +265,15 @@ def get_or_create_slug(session_id: str) -> str:
     return slug
 
 
-def get_plan_file_path(session_id: str) -> Path:
+def get_plan_file_path(session_id: str, plans_dir: Path | None = None) -> Path:
     """Get the plan file path for the given session."""
-    return PLANS_DIR / f"{get_or_create_slug(session_id)}.md"
+    d = plans_dir if plans_dir is not None else _DEFAULT_PLANS_DIR
+    return d / f"{get_or_create_slug(session_id, plans_dir=d)}.md"
 
 
-def read_plan_file(session_id: str) -> str | None:
+def read_plan_file(session_id: str, plans_dir: Path | None = None) -> str | None:
     """Read the plan file content for the given session, or None if not found."""
-    path = get_plan_file_path(session_id)
+    path = get_plan_file_path(session_id, plans_dir=plans_dir)
     if path.exists():
         return path.read_text(encoding="utf-8")
     return None
