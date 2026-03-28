@@ -2,8 +2,6 @@
 
 把 [kimi-cli](https://github.com/MoonshotAI/kimi-cli) 接入 Telegram，让你在手机上也能用完整的 AI Agent 能力：执行命令、读写文件、联网搜索、识别图片……和在终端里用没有区别。
 
-底层模型使用 Google Gemini。
-
 > 原版 kimi-cli 文档见 [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli)
 
 ---
@@ -15,7 +13,8 @@ kimi-cli 原有的工具在 Telegram 里全部可用：
 - **Shell 命令**：让 AI 帮你跑脚本、查日志、管进程
 - **文件读写**：读代码、改配置、生成文件
 - **联网搜索**：基于 Gemini Google Search grounding
-- **图片识别**：直接发图片，或者粘贴图片链接
+- **图片识别**：直接发图片，AI 自动分析内容
+- **文件阅读**：发送文本、PDF、代码文件，AI 读取并处理（支持 txt/md/py/js/pdf/json/yaml 等）
 - **长任务**：AI 完成后主动发消息通知你，不用守着等
 
 多个用户可以共用同一个 Bot，会话互相隔离，重启后历史对话自动续接。
@@ -47,26 +46,37 @@ cp kimi.toml.example kimi.toml
 编辑 `kimi.toml`，填入 API Key 和 Bot Token：
 
 ```toml
-default_model = "gemini/gemini-2.5-flash-lite"
+default_model = "gemini-3-flash"
 
-[models."gemini/gemini-2.5-flash-lite"]
-provider = "gemini"
-model = "gemini-2.5-flash-lite"
-max_context_size = 1048576
-capabilities = ["image_in", "thinking", "video_in"]
-
-[providers.gemini]
-type = "gemini"
-base_url = "https://generativelanguage.googleapis.com"
+[providers.google]
+type = "openai"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 api_key = "YOUR_GEMINI_API_KEY"
+
+# 多个模型可以指向同一个 provider，通过 /model 命令切换
+[models.gemini-3-flash]
+provider = "google"
+model = "gemini-3-flash-preview"
+max_context_size = 1048576
+
+[models.gemini-3-1-pro]
+provider = "google"
+model = "gemini-3.1-pro-preview"
+max_context_size = 1048576
+
+[models.gemini-3-1-flash-lite]
+provider = "google"
+model = "gemini-3.1-flash-lite-preview"
+max_context_size = 1048576
 
 [im]
 platform = "telegram"
 token = ""                        # 或在 .env 里设置 TELEGRAM_BOT_TOKEN
 allowed_chat_ids = ["你的chat_id"]  # 通过 @userinfobot 获取
-admin_chat_ids = ["你的chat_id"]    # 管理员：不受 default_mode 限制
+admin_chat_ids = ["你的chat_id"]    # 管理员：不受 default_mode 限制，可用 /model /status
 default_mode = "auto"             # suggest | auto | full-auto
 work_dir = "."
+session_idle_timeout = 1800       # 空闲超过此秒数后从内存卸载会话（下次消息自动续接）
 ```
 
 通过 [@BotFather](https://t.me/BotFather) 创建 Telegram Bot，在项目目录创建 `.env`：
@@ -103,10 +113,12 @@ Bot 有三种执行模式，在 `kimi.toml` 的 `[im]` 段配置，由管理员�
 
 ### Bot 层命令（直接操作会话）
 
-| 命令 | 说明 |
-|------|------|
-| `/cancel` | 中止当前正在运行的 AI 任务 |
-| `/status` | 查看 Bot 状态（版本、模型、活跃会话数）（管理员可用） |
+| 命令 | 说明 | 权限 |
+|------|------|------|
+| `/cancel` | 中止当前正在运行的 AI 任务 | 所有人 |
+| `/status` | 查看 Bot 状态（版本、模型、活跃会话数、context 用量） | 管理员 |
+| `/model` | 查看当前模型 | 管理员 |
+| `/model <名称>` | 切换当前会话的模型，下次对话生效 | 管理员 |
 
 ### AI 对话命令（发给 AI 处理）
 
@@ -128,7 +140,7 @@ Bot 有三种执行模式，在 `kimi.toml` 的 `[im]` 段配置，由管理员�
 !git status
 ```
 
-不管当前是哪种执行模式，`!` 命令都直接执行。
+不管当前是哪种执行模式，`!` 命令都直接执行，但仍受白名单控制。
 
 ---
 
@@ -167,7 +179,9 @@ Bot 有三种执行模式，在 `kimi.toml` 的 `[im]` 段配置，由管理员�
 work_dir/
   sessions/
     9876543222/   ← 用户 A
+      context.json
+      uploads/    ← 用户发送的文件
     1234567890/   ← 用户 B
 ```
 
-重启 Bot 后自动续接上次对话。
+重启 Bot 后自动续接上次对话。会话在内存中空闲超过 `session_idle_timeout`（默认 30 分钟）后自动卸载，下次收到消息时从磁盘重载。
