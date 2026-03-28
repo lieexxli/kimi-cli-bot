@@ -180,6 +180,7 @@ class IMConfig(BaseModel):
     @field_serializer("token", when_used="json")
     def dump_token(self, v: SecretStr | None) -> str | None:
         return v.get_secret_value() if v else None
+
     webhook_url: str | None = Field(default=None, description="Webhook URL (optional)")
     """Webhook URL. If None, uses long polling."""
     webhook_port: int = Field(default=8443, description="Local port for webhook server")

@@ -207,7 +207,11 @@ class Shell(CallableTool2[Params]):
                 else:
                     break
 
-        process = await kaos.exec(*self._shell_args(command), env=get_noninteractive_env())
+        process = await kaos.exec(
+            *self._shell_args(command),
+            env=get_noninteractive_env(),
+            cwd=str(self._runtime.session.work_dir),
+        )
 
         # Close stdin immediately so interactive prompts (e.g. git password) get
         # EOF instead of hanging forever waiting for input that will never come.

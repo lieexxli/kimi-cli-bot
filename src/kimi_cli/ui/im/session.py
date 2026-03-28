@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from kosong.message import ImageURLPart, TextPart, ThinkPart
@@ -45,6 +46,7 @@ _IMAGE_CONTENT_TYPES = {
     "image/tiff",
 }
 _URL_RE = re.compile(r"^https?://\S+$")
+
 
 async def _maybe_convert_image_url(text: str) -> UserInput:
     """If the message is a bare image URL, return multimodal parts; otherwise return as-is."""
@@ -113,7 +115,7 @@ class IMSession:
         # Current turn's cancel event; None when no turn is running
         self._current_cancel: asyncio.Event | None = None
         # Keep a reference to the running turn task to prevent GC and surface exceptions
-        self._current_task: asyncio.Task | None = None
+        self._current_task: asyncio.Task[None] | None = None
         # Loop detection: tracks consecutive calls to the same tool
         self._loop_last_tool: str | None = None
         self._loop_consecutive: int = 0
@@ -127,6 +129,28 @@ class IMSession:
         self._last_activity: float = time.monotonic()
         # Per-session model override (set via /model command)
         self._model_override: str | None = None
+        # Persistent shell CWD for ! commands (None = session work_dir root)
+        self._shell_cwd: Path | None = None
+
+    # ------------------------------------------------------------------
+    # Public read-only accessors (used by IMServer and commands modules)
+    # ------------------------------------------------------------------
+
+    @property
+    def turn_running(self) -> bool:
+        return self._turn_running
+
+    @property
+    def last_activity(self) -> float:
+        return self._last_activity
+
+    @property
+    def model_override(self) -> str | None:
+        return self._model_override
+
+    @property
+    def last_status(self) -> StatusUpdate | None:
+        return self._last_status
 
     async def handle_message(self, text: UserInput, *, message_id: int | None = None) -> None:
         """Called when the user sends a message.
@@ -160,7 +184,7 @@ class IMSession:
         task = asyncio.create_task(self._run_next_turn())
         self._current_task = task
 
-        def _on_done(t: asyncio.Task) -> None:
+        def _on_done(t: asyncio.Task[None]) -> None:
             self._current_task = None
             if not t.cancelled() and (exc := t.exception()) is not None:
                 logger.error(
@@ -175,7 +199,11 @@ class IMSession:
         """Switch the model for this session. Takes effect on the next turn."""
         available = list(self._config.models.keys())
         if model_name not in self._config.models:
-            hint = "\n可用模型：\n" + "\n".join(f"  • {m}" for m in sorted(available)) if available else ""
+            hint = (
+                "\n可用模型：\n" + "\n".join(f"  • {m}" for m in sorted(available))
+                if available
+                else ""
+            )
             await self._send(f"❌ 模型 `{model_name}` 不存在。{hint}")
             return
         self._model_override = model_name
@@ -230,8 +258,6 @@ class IMSession:
     async def _get_kimi(self) -> KimiCLI:
         """Lazily create or return the existing KimiCLI instance for this session."""
         if self._kimi is None:
-            from pathlib import Path
-
             from kaos.path import KaosPath
 
             from kimi_cli.app import KimiCLI
@@ -281,13 +307,13 @@ class IMSession:
 
             # Per-session PERSONA.md: inject into ${ROLE_ADDITIONAL} slot.
             # Only affects new sessions (existing sessions use stored system prompt).
-            agent_file: Path | None = None
+            import yaml  # bundled with kimi-cli deps
+
             persona_path = work_dir_path / "PERSONA.md"
+            agent_file: Path | None = None
             if persona_path.exists():
                 persona_content = persona_path.read_text(encoding="utf-8").strip()
                 if persona_content:
-                    import yaml  # bundled with kimi-cli deps
-
                     agent_yaml_path = work_dir_path / "_agent.yaml"
                     agent_yaml_path.write_text(
                         yaml.dump(
@@ -304,22 +330,35 @@ class IMSession:
                     )
                     agent_file = agent_yaml_path
 
+            exclude_tools = [] if is_admin else ["kimi_cli.tools.shell:Shell"]
+            extra_tools = [
+                "kimi_cli.tools.im_fs:DeleteFile",
+                "kimi_cli.tools.im_fs:MoveFile",
+                "kimi_cli.tools.im_fs:CopyFile",
+                "kimi_cli.tools.im_fs:MakeDir",
+                "kimi_cli.tools.im_fs:StatFile",
+            ]
             self._kimi = await KimiCLI.create(
                 session,
                 config=self._config,
                 model_name=self._model_override or self._im_config.model_name,
                 yolo=yolo,
                 agent_file=agent_file,
+                exclude_tools=exclude_tools,
+                extra_tools=extra_tools,
             )
         return self._kimi
 
     async def _run_turn(self, user_input: UserInput) -> None:
         """Run one AI turn and send the response back via IM."""
-        # ! prefix or shell-like command: run directly, bypass AI
+        # ! prefix or shell-like command: run directly, bypass AI (admin only)
         if isinstance(user_input, str) and user_input.startswith("!"):
+            if self._chat_id not in self._im_config.admin_chat_ids:
+                await self._send("⚠️ Shell 直通（`!` 命令）仅管理员可用。")
+                return
             await self._run_shell_passthrough(user_input[1:].strip())
             return
-        # /new is an IM-friendly alias for /clear (text only)
+        # /new is an IM-friendly alias for /clear
         if isinstance(user_input, str) and user_input.strip().lower() == "/new":
             user_input = "/clear"
         # If the message is a bare URL pointing to an image, dispatch it as an image
@@ -471,6 +510,17 @@ class IMSession:
             cancel_event.set()
             await self._send("[已取消]")
         except Exception as e:
+            from kosong.chat_provider import APIEmptyResponseError
+
+            if isinstance(e, APIEmptyResponseError):
+                model_id = (
+                    self._model_override
+                    or self._im_config.model_name
+                    or self._config.default_model
+                    or "unknown"
+                )
+                await self._send(f"⚠️ `{model_id}` 未返回内容，可能因内容限制拒绝了此请求。")
+                return
             logger.exception("Error during IM AI turn for chat_id={chat_id}", chat_id=self._chat_id)
             if text_buffer:
                 masked = mask_output_conditional(
@@ -644,18 +694,45 @@ class IMSession:
     async def _run_shell_passthrough(self, command: str) -> None:
         """Run a shell command directly and send output back, bypassing AI."""
         if not command:
-            await self._send("用法: !<命令>  例如: !pwd")
+            await self._send("用法: !<命令>  例如: !pwd\n当前目录: " + str(self._get_shell_cwd()))
             return
 
-        from pathlib import Path
+        session_root = (
+            Path(self._im_config.work_dir).expanduser().resolve() / "sessions" / self._chat_id
+        )
+        session_root.mkdir(parents=True, exist_ok=True)
+        cwd = self._get_shell_cwd()
 
-        # Run in the session's work directory so pwd/ls reflect the right context
-        base = Path(self._im_config.work_dir).expanduser().resolve()
-        work_dir = base / "sessions" / self._chat_id
-        work_dir.mkdir(parents=True, exist_ok=True)
+        # Handle shell built-ins that need persistent state
+        stripped = command.strip()
+
+        # !cd [dir] — persist working directory
+        if stripped == "cd" or stripped.startswith("cd ") or stripped.startswith("cd\t"):
+            target = stripped[2:].strip()
+            if target and not Path(target).is_absolute():
+                new_path = (cwd / target).resolve()
+            elif target:
+                new_path = Path(target).resolve()
+            else:
+                new_path = session_root
+            try:
+                new_path.relative_to(session_root)
+            except ValueError:
+                await self._send(f"❌ 禁止切换到用户目录外: {new_path}")
+                return
+            if not new_path.exists() or not new_path.is_dir():
+                await self._send(f"❌ 目录不存在: {new_path}")
+                return
+            self._shell_cwd = new_path
+            rel = new_path.relative_to(session_root)
+            msg = f"✓ 当前目录: ~/{rel}" if str(rel) != "." else "✓ 当前目录: ~/（根目录）"
+            await self._send(msg)
+            return
 
         try:
             from kimi_cli.utils.subprocess_env import get_noninteractive_env
+
+            env = get_noninteractive_env()
 
             if sys.platform == "win32":
                 ps_command = f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
@@ -666,8 +743,8 @@ class IMSession:
                 *args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                cwd=str(work_dir),
-                env=get_noninteractive_env(),
+                cwd=str(cwd),
+                env=env,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
             output = stdout.decode("utf-8", errors="replace").strip()
@@ -679,6 +756,15 @@ class IMSession:
             await self._send("[Error] 命令超时（30s）")
         except Exception as e:
             await self._send(f"[Error] {e}")
+
+    def _get_shell_cwd(self) -> Path:
+        """Return the current shell working directory, defaulting to session root."""
+        session_root = (
+            Path(self._im_config.work_dir).expanduser().resolve() / "sessions" / self._chat_id
+        )
+        if self._shell_cwd is None or not self._shell_cwd.exists():
+            return session_root
+        return self._shell_cwd
 
     async def _send(self, text: str) -> None:
         """Send a message to the IM chat."""

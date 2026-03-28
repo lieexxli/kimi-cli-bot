@@ -209,16 +209,21 @@ class TelegramAdapter(IMAdapter):
         import re
         from pathlib import Path
 
-        ACCEPTED_PREFIXES = ("text/", "application/pdf", "application/json",
-                             "application/xml", "application/x-yaml",
-                             "application/x-sh", "application/x-python")
+        ACCEPTED_PREFIXES = (
+            "text/",
+            "application/pdf",
+            "application/json",
+            "application/xml",
+            "application/x-yaml",
+            "application/x-sh",
+            "application/x-python",
+        )
 
         mime = (document.mime_type or "application/octet-stream").lower()
         if not any(mime.startswith(p) for p in ACCEPTED_PREFIXES):
             await self.send_message(
                 chat_id,
-                f"⚠️ 不支持的文件类型：{mime}\n"
-                "支持：文本文件、PDF、JSON、XML、YAML、代码文件等。",
+                f"⚠️ 不支持的文件类型：{mime}\n支持：文本文件、PDF、JSON、XML、YAML、代码文件等。",
             )
             return
 
@@ -230,7 +235,9 @@ class TelegramAdapter(IMAdapter):
 
             uploads_dir = (
                 Path(self._im_config.work_dir).expanduser().resolve()
-                / "sessions" / chat_id / "uploads"
+                / "sessions"
+                / chat_id
+                / "uploads"
             )
             uploads_dir.mkdir(parents=True, exist_ok=True)
             dest = uploads_dir / safe_name

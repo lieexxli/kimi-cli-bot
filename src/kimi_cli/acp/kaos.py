@@ -283,8 +283,10 @@ class ACPKaos:
     ) -> None:
         await self._fallback.mkdir(path, parents=parents, exist_ok=exist_ok)
 
-    async def exec(self, *args: str, env: Mapping[str, str] | None = None) -> KaosProcess:
-        return await self._fallback.exec(*args, env=env)
+    async def exec(
+        self, *args: str, env: Mapping[str, str] | None = None, cwd: str | None = None
+    ) -> KaosProcess:
+        return await self._fallback.exec(*args, env=env, cwd=cwd)
 
     def _abs_path(self, path: StrOrKaosPath) -> str:
         kaos_path = path if isinstance(path, KaosPath) else KaosPath(path)

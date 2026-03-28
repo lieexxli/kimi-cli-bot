@@ -273,6 +273,8 @@ async def load_agent(
     *,
     mcp_configs: list[MCPConfig] | list[dict[str, Any]],
     start_mcp_loading: bool = True,
+    exclude_tools: list[str] | None = None,
+    extra_tools: list[str] | None = None,
 ) -> Agent:
     """
     Load agent from specification file.
@@ -332,10 +334,14 @@ async def load_agent(
         Environment: runtime.environment,
     }
     tools = agent_spec.allowed_tools if agent_spec.allowed_tools is not None else agent_spec.tools
-    if agent_spec.exclude_tools:
-        logger.debug("Excluding tools: {tools}", tools=agent_spec.exclude_tools)
-        tools = [tool for tool in tools if tool not in agent_spec.exclude_tools]
+    all_excluded = list(agent_spec.exclude_tools or []) + list(exclude_tools or [])
+    if all_excluded:
+        logger.debug("Excluding tools: {tools}", tools=all_excluded)
+        tools = [tool for tool in tools if tool not in all_excluded]
     toolset.load_tools(tools, tool_deps)
+    if extra_tools:
+        logger.debug("Loading extra tools: {tools}", tools=extra_tools)
+        toolset.load_tools(extra_tools, tool_deps)
 
     # Load plugin tools
     from kimi_cli.plugin.manager import get_plugins_dir

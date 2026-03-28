@@ -41,6 +41,8 @@ class ExitCode:
     SUCCESS = 0
     FAILURE = 1
     RETRYABLE = 75  # EX_TEMPFAIL from sysexits.h
+
+
 InputFormat = Literal["text", "stream-json"]
 OutputFormat = Literal["text", "stream-json"]
 

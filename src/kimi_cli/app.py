@@ -91,6 +91,8 @@ class KimiCLI:
         max_ralph_iterations: int | None = None,
         startup_progress: Callable[[str], None] | None = None,
         defer_mcp_loading: bool = False,
+        exclude_tools: list[str] | None = None,
+        extra_tools: list[str] | None = None,
     ) -> KimiCLI:
         """
         Create a KimiCLI instance.
@@ -222,6 +224,8 @@ class KimiCLI:
             runtime,
             mcp_configs=mcp_configs or [],
             start_mcp_loading=not defer_mcp_loading,
+            exclude_tools=exclude_tools,
+            extra_tools=extra_tools,
         )
 
         if startup_progress is not None:

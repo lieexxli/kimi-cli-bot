@@ -31,9 +31,12 @@ def get_current_im_server() -> IMServer | None:
     return _current_server
 
 
-UserInput = Any  # str | list[ContentPart]
-OnMessageCallback = Callable[[str, str, UserInput, int | None], Coroutine[Any, Any, None]]
-"""Callback type: (chat_id, user_id, text_or_parts, message_id) -> None"""
+if TYPE_CHECKING:
+    from typing import Any
+
+    UserInput = Any  # str | list[ContentPart]
+    OnMessageCallback = Callable[[str, str, UserInput, int | None], Coroutine[Any, Any, None]]
+    """Callback type: (chat_id, user_id, text_or_parts, message_id) -> None"""
 
 CallbackHandler = Callable[[str, str], Awaitable[None]]
 """Inline keyboard callback: (callback_query_id, callback_data) -> None"""
@@ -125,6 +128,16 @@ class IMServer:
         return self._im_config
 
     @property
+    def config(self) -> Config:
+        """Return the global config."""
+        return self._config
+
+    @property
+    def sessions(self) -> dict[str, IMSession]:
+        """Return the active sessions dict."""
+        return self._sessions
+
+    @property
     def default_model(self) -> str:
         """Return the effective model name (IM override or global default)."""
         return self._im_config.model_name or self._config.default_model or "unknown"
@@ -135,7 +148,7 @@ class IMServer:
 
     def active_chat_ids(self) -> list[str]:
         """Return chat IDs that currently have a turn in progress."""
-        return [cid for cid, s in self._sessions.items() if s._turn_running]
+        return [cid for cid, s in self._sessions.items() if s.turn_running]
 
     async def send_to_chat(self, chat_id: str, text: str) -> int | None:
         """Send a message to a chat (SendIMNotification). Returns message_id if available.
@@ -166,7 +179,7 @@ class IMServer:
         """Start the IM server and block until cancelled."""
         global _current_server
         _current_server = self
-        cleanup_task: asyncio.Task | None = None
+        cleanup_task: asyncio.Task[None] | None = None
         try:
             self._adapter.set_on_message_callback(self._on_message)
             await self._adapter.start()
@@ -202,7 +215,7 @@ class IMServer:
             idle_ids = [
                 cid
                 for cid, s in list(self._sessions.items())
-                if not s._turn_running and (now - s._last_activity) > timeout
+                if not s.turn_running and (now - s.last_activity) > timeout
             ]
             for cid in idle_ids:
                 del self._sessions[cid]
