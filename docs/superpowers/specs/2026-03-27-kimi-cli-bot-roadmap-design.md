@@ -264,56 +264,26 @@ soul 层的 `/clear /yolo /compact` 用户直接发消息触发，无需重复�
 
 ---
 
-### Phase 2：安全加固（~1 周）
+### Phase 2：安全加固（已完成 2026-03-28，部分跳过）
 
-#### 2.1 速率限制
+#### 2.1 速率限制（跳过）
 
-```python
-# src/kimi_cli/ui/im/rate_limiter.py
-class RateLimiter:
-    def __init__(self, rpm: int):
-        self._rpm = rpm
-        self._timestamps: dict[str, deque[float]] = defaultdict(deque)
+IM 入口消息频率天然受限，不需要 RPM 限制。
 
-    def is_allowed(self, chat_id: str) -> bool:
-        now = time.monotonic()
-        dq = self._timestamps[chat_id]
-        while dq and now - dq[0] > 60:
-            dq.popleft()
-        if len(dq) >= self._rpm:
-            return False
-        dq.append(now)
-        return True
-```
+#### 2.2 Prompt Injection 防护（跳过）
 
-超限时回复友好提示，管理员豁免。配置：`[im.rate_limit] rpm = 20`
+原设计依赖 `KIMI_DENY_PATHS` 环境变量，代码审查确认 kimi-cli 中不存在该机制，无法实现。路径黑名单需要 kimi-cli 底层支持。
 
-#### 2.2 Prompt Injection 防护（capability guard，非文本过滤）
+#### 2.3 压缩感知通知 ✅
 
-**设计原则**：保护点在能力层，不是文本分类层。通过关键词匹配消息内容来决策会误伤正常讨论，且容易被绕过。
+`case CompactionEnd()` 处理，发送"📦 历史对话已自动压缩"通知。
 
-正确做法：**敏感能力压根不向 Telegram 触发的 Agent 暴露**：
+#### 2.4 分页优化 ✅
 
-- `kimi.toml` 及其所在目录加入 kimi-cli 的文件操作黑名单（`KIMI_DENY_PATHS` 环境变量或配置项），Agent 无法读取
-- 白名单修改（`im_allow`）只能通过重启 Bot + 修改配置文件实现，不存在运行时修改接口
-- `/yolo` 等 soul 层命令保持可用（它们改变的是 session 内状态，不是持久化配置）
+`split_message()` 升级为段落优先分割（`\n\n` 边界），多页标注 `(1/N)` 页码。
+首页 reply_to 暂未实现（需改 `IMAdapter.send_message` 接口，影响面较大，推迟）。
 
-#### 2.3 压缩感知通知
-
-监听 kimi-cli 压缩事件（在 `_run_turn` 中检测 `StatusUpdate` 中上下文使用率骤降），触发时发送：
-
-```
-📦 历史对话已自动压缩（保留最近内容）
-如需完整上下文请用 /clear 开启新对话
-```
-
-#### 2.4 分页优化
-
-- 超 4096 字符时优先在 `\n\n` 处分割（`chunkMode=newline`），而非硬截断
-- 第一页 reply 到原始消息形成线程（`replyToMode=first`），后续页独立发送
-- 页码标注：`(1/3)`
-
-#### 2.5 安全文档
+#### 2.5 安全文档 ✅
 
 README 增加"安全说明"：
 
@@ -330,17 +300,24 @@ README 增加"安全说明"：
 
 ---
 
-### Phase 3：会话治理（~1 周）
+### Phase 3：会话治理（已完成 2026-03-28）
 
-#### 3.1 内存清理
+#### 3.1 内存清理 ✅
 
-`IMSession` 30 分钟无活动后从 `IMServer._sessions` 移除，重新收到消息时从文件重载。
+`IMSession` idle 超时后从 `IMServer._sessions` 移除，下次收到消息时从磁盘重载。
+- 配置：`[im] session_idle_timeout = 1800`（秒，0 = 禁用）
+- `IMServer._idle_cleanup_loop()` 每分钟扫描一次
+- `IMSession._last_activity` 在 `handle_message` 时更新
 
-#### 3.2 磁盘清理
+#### 3.2 队列容量上限 ✅
 
-- 可配置保留天数（默认 30 天）
-- `context.json` 超 10MB 触发 kimi-cli 原有 compaction
-- `asyncio.Queue()` 设容量上限（默认 100），超限回复"繁忙，请稍后重试"
+- 配置：`[im] session_queue_max_size = 10`（0 = 不限）
+- 超限时回复"⏳ 消息队列已满，请等待当前任务完成后再发送。"
+
+#### 3.3 磁盘清理（未做，推迟）
+
+- 可配置保留天数：kimi-cli 的 compaction 机制已在 context 超阈值时自动触发，**文件大小触发**无入口，跳过
+- 历史 session 目录定期清理：低优先级，暂不实现
 
 ---
 

@@ -8,6 +8,8 @@ Supports Telegram bots with bidirectional communication:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING
@@ -164,6 +166,7 @@ class IMServer:
         """Start the IM server and block until cancelled."""
         global _current_server
         _current_server = self
+        cleanup_task: asyncio.Task | None = None
         try:
             self._adapter.set_on_message_callback(self._on_message)
             await self._adapter.start()
@@ -171,14 +174,43 @@ class IMServer:
                 "IM server started (platform={platform})",
                 platform=self._im_config.platform,
             )
+            if self._im_config.session_idle_timeout > 0:
+                cleanup_task = asyncio.create_task(self._idle_cleanup_loop())
             # Block until cancelled
             await asyncio.get_running_loop().create_future()
         except asyncio.CancelledError:
             logger.info("IM server stopping...")
         finally:
+            if cleanup_task is not None:
+                cleanup_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await cleanup_task
             _current_server = None
             await self._adapter.stop()
             logger.info("IM server stopped")
+
+    async def _idle_cleanup_loop(self) -> None:
+        """Periodically evict sessions that have been idle too long.
+
+        Evicted sessions are removed from memory only; their context.json persists on
+        disk and will be reloaded automatically on the next incoming message.
+        """
+        timeout = self._im_config.session_idle_timeout
+        while True:
+            await asyncio.sleep(60)  # check every minute
+            now = time.monotonic()
+            idle_ids = [
+                cid
+                for cid, s in list(self._sessions.items())
+                if not s._turn_running and (now - s._last_activity) > timeout
+            ]
+            for cid in idle_ids:
+                del self._sessions[cid]
+                logger.info(
+                    "IM session {chat_id} evicted (idle > {timeout}s)",
+                    chat_id=cid,
+                    timeout=timeout,
+                )
 
     async def _on_message(
         self, chat_id: str, user_id: str, text: UserInput, message_id: int | None = None
