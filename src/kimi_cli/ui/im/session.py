@@ -173,10 +173,15 @@ class IMSession:
 
     async def switch_model(self, model_name: str) -> None:
         """Switch the model for this session. Takes effect on the next turn."""
+        available = list(self._config.models.keys())
+        if model_name not in self._config.models:
+            hint = "\n可用模型：\n" + "\n".join(f"  • {m}" for m in sorted(available)) if available else ""
+            await self._send(f"❌ 模型 `{model_name}` 不存在。{hint}")
+            return
         self._model_override = model_name
         # Discard current kimi instance so it's recreated with the new model
         self._kimi = None
-        await self._send(f"✅ 模型已切换为 `{model_name}`，下次对话生效。")
+        await self._send(f"✅ 已切换为 `{model_name}`，下次对话生效。")
 
     async def cancel_current_turn(self) -> None:
         """Cancel the currently running turn, if any."""
