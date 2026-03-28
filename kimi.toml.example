@@ -1,8 +1,8 @@
-default_model = "gemini/gemini-2.5-flash-lite"
+default_model = "gemini/gemini-3-flash-preview"
 
-[models."gemini/gemini-2.5-flash-lite"]
+[models."gemini/gemini-3-flash-preview"]
 provider = "gemini"
-model = "gemini-2.5-flash-lite"
+model = "gemini-3-flash-preview"
 max_context_size = 1048576
 capabilities = ["image_in", "thinking", "video_in"]
 
@@ -38,8 +38,11 @@ admin_chat_ids = ["YOUR_CHAT_ID"]
 #   auto      — 文件读写/命令执行自动通过，仅工作目录外的编辑需审批（推荐）
 #   full-auto — 完全自动，无需任何审批（仅限个人使用）
 default_mode = "auto"
-# Bot 的工作根目录，每个用户会在此目录下创建独立子目录
+# Bot 的工作根目录，每个用户会在 sessions/<chat_id>/ 下拥有完全独立的空间
+# AI 生成的文件、Shell 命令、Plan 文件等均写入该目录，用户间互不可见
 work_dir = "."
+# 会话空闲超过此秒数后从内存卸载（下次消息自动从磁盘续接）
+session_idle_timeout = 1800
 # 收到消息时的回应 emoji（留空禁用）
 ack_reaction = ""
 # 连续相同工具调用多少次后触发循环检测
