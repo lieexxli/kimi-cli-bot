@@ -612,6 +612,8 @@ class IMSession:
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
+            from kimi_cli.utils.subprocess_env import get_noninteractive_env
+
             if sys.platform == "win32":
                 ps_command = f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
                 args = ["powershell.exe", "-command", ps_command]
@@ -622,6 +624,7 @@ class IMSession:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 cwd=str(work_dir),
+                env=get_noninteractive_env(),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
             output = stdout.decode("utf-8", errors="replace").strip()
