@@ -152,7 +152,10 @@ Bot 有三种执行模式，在 `kimi.toml` 的 `[im]` 段配置，由管理员�
 1. `allowed_chat_ids` 严格控制白名单，留空则允许所有人
 2. 不确定时使用 `default_mode = "suggest"`，有操作时点按钮确认
 3. 不要以 root 权限运行 Bot
-4. Bot 会自动屏蔽输出中的 API Key、Token 等敏感信息（`output_masking_enabled = true`）
+4. `work_dir` 设置为 `chmod 700`，防止其他本地用户读取会话历史
+5. Bot 会自动屏蔽输出中的 API Key、Token 等敏感信息（`output_masking_enabled = true`）
+
+> `!cmd` 语法可绕过 AI 直接执行 shell 命令，同样受白名单控制，但**不经过审批流程**，请确保白名单内用户可信。
 
 ---
 
