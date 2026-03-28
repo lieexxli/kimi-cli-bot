@@ -13,6 +13,33 @@ if TYPE_CHECKING:
     from kimi_cli.ui.im import IMServer
 
 
+async def handle_model(chat_id: str, model_name: str, server: IMServer) -> None:
+    """Switch the model for the current session (/model <name>)."""
+    admin_ids = server.im_config.admin_chat_ids
+    if admin_ids and chat_id not in admin_ids:
+        await server.send_to_chat(chat_id, "⚠️ /model 仅管理员可用。")
+        return
+    if not model_name:
+        current = server.default_model
+        session = server.get_session(chat_id)
+        if session and session._model_override:
+            current = session._model_override
+        await server.send_to_chat(chat_id, f"当前模型：`{current}`\n用法：/model <模型名>")
+        return
+    session = server.get_session(chat_id)
+    if session is None:
+        # Create a stub session just to relay the switch; it will be initialized on next message
+        from kimi_cli.ui.im.session import IMSession
+        session = IMSession(
+            chat_id=chat_id,
+            server=server,
+            im_config=server.im_config,
+            config=server._config,
+        )
+        server._sessions[chat_id] = session
+    await session.switch_model(model_name)
+
+
 async def handle_cancel(chat_id: str, server: IMServer) -> None:
     session = server.get_session(chat_id)
     if session is None:

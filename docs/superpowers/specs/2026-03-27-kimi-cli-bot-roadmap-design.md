@@ -129,13 +129,13 @@ kimi-cli-bot 在 MoonshotAI/kimi-cli 基础上添加了 Telegram Bot 适配层�
 | **P1** | 压缩感知通知 | 压缩触发时发系统消息 | Gemini CLI |
 | **P1** | 分页优化 | 按段落边界分割；首页 reply 到原消息形成线程 | Claude Code |
 | **P1** | 安全文档 | README：白名单用户 = 服务器 Shell 权限 | — |
-| **P2** | 文件发送保护 | 等文件发送接口实现后再加；保护 kimi.toml 等路径 | Claude Code |
-| **P2** | 会话超时清理 | 内存 30 分钟 idle 清理；磁盘可配保留天数 | OpenClaw |
-| **P2** | /status token 展示 | 估算上下文使用率、对话轮数 | Gemini CLI |
-| **P2** | 每用户 PERSONA.md | `sessions/<chat_id>/PERSONA.md` 注入 system prompt | Codex |
-| **P2** | 文件附件支持 | PDF、代码文件，依赖 P2 文件发送接口 | — |
-| **P3** | 多模型文档 + /model 命令 | kimi-cli 已支持多模型，补文档 + 命令暴露 | — |
-| **P3** | 预设 Skills | 利用现有 BackgroundTaskManager，定时通知/监控 | Codex |
+| ~~**P2**~~ | ~~文件发送保护~~ | 无文件发送工具，漏洞面不存在，跳过 | Claude Code |
+| **P2** ✅ | 会话超时清理 | 内存 30 分钟 idle 清理（`session_idle_timeout`） | OpenClaw |
+| **P2** ✅ | /status token 展示 | 累积 `StatusUpdate`，`/status` 展示 token 用量 | Gemini CLI |
+| **P2** ✅ | 每用户 PERSONA.md | `sessions/<chat_id>/PERSONA.md` → `${ROLE_ADDITIONAL}`，新 session 生效 | Codex |
+| **P2** ✅ | 文件附件支持 | PDF、文本、代码文件；保存到 uploads/，AI 用 ReadFile 读取 | — |
+| **P3** ✅ | /model 命令 | 管理员专用，切换后下轮生效；kimi 实例重建，历史保留 | — |
+| ~~**P3**~~ | ~~预设 Skills~~ | BackgroundTaskManager 非调度器，无法直接实现定时任务；跳过 | Codex |
 
 ---
 
@@ -328,17 +328,20 @@ README 增加"安全说明"：
 └─ 上次压缩：2 小时前
 ```
 
-#### 4.2 每用户 PERSONA.md
+#### 4.2 每用户 PERSONA.md ✅（2026-03-28）
 
-`sessions/<chat_id>/PERSONA.md` 在会话初始化时注入 system prompt。
+`sessions/<chat_id>/PERSONA.md` → 生成 `_agent.yaml`（`extend: default` + `ROLE_ADDITIONAL`）→ 传给 `KimiCLI.create(agent_file=...)`。
+**注意**：只对新 session 生效（首次初始化时写入系统提示）；已有 session 需 `/clear` 后生效。
 
-#### 4.3 文件附件 + 文件发送保护
+#### 4.3 文件附件 ✅（2026-03-28）
 
-先实现文件附件接收（PDF/TXT/代码，< 20MB），同步加入 `assertSendable()` 保护：拒绝发送 kimi.toml、session 目录、`.env` 等路径下的文件。两个功能同一个 Phase 实现，避免先开洞后堵。
+接收 `message.document`：下载保存到 `sessions/<chat_id>/uploads/<filename>`，发给 AI 一条包含文件路径的指令，AI 用 `ReadFile` 工具读取。
+支持类型：文本、PDF、JSON、XML、YAML、代码文件；其余类型回复不支持提示。
+文件发送保护：无文件发送接口，漏洞面不存在，跳过。
 
-#### 4.4 Markdown 格式化
+#### 4.4 Markdown 格式化（未做）
 
-代码块用 `parse_mode=MarkdownV2`，Shell 输出等宽字体显示。
+`parse_mode=MarkdownV2` 需要对所有文本做转义，容易产生解析错误。低优先级，暂不实现。
 
 ---
 

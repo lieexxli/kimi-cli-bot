@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Any, override
 
 from kimi_cli.ui.im import CallbackHandler, IMAdapter
 from kimi_cli.utils.logging import logger
@@ -78,6 +78,7 @@ class TelegramAdapter(IMAdapter):
         from kimi_cli.ui.im import get_current_im_server
         from kimi_cli.ui.im.commands import (
             handle_cancel,
+            handle_model,
             handle_status,
         )
 
@@ -97,6 +98,17 @@ class TelegramAdapter(IMAdapter):
             if server:
                 await handle_status(chat_id, server)
 
+        @self._dp.message(Command("model"))
+        async def on_model(message: Message) -> None:  # type: ignore[reportUnusedFunction]
+            chat_id = str(message.chat.id)
+            server = get_current_im_server()
+            if server:
+                # Extract argument after /model
+                text = message.text or ""
+                parts = text.split(maxsplit=1)
+                model_arg = parts[1].strip() if len(parts) > 1 else ""
+                await handle_model(chat_id, model_arg, server)
+
         # Catch-all message handler — must be registered AFTER command handlers
         @self._dp.message()
         async def handle_message(message: Message) -> None:  # type: ignore[reportUnusedFunction]
@@ -113,6 +125,12 @@ class TelegramAdapter(IMAdapter):
                     fid=photo.file_id,
                 )
                 await self._dispatch_photo(chat_id, user_id, photo.file_id, caption)
+                return
+
+            if message.document:
+                await self._dispatch_document(
+                    chat_id, user_id, message.document, message.caption or "", message.message_id
+                )
                 return
 
             if message.text is None:
@@ -172,6 +190,68 @@ class TelegramAdapter(IMAdapter):
             self._polling_task = asyncio.create_task(
                 self._dp.start_polling(self._bot, allowed_updates=["message", "callback_query"])  # type: ignore[reportUnknownMemberType]
             )
+
+    async def _dispatch_document(
+        self,
+        chat_id: str,
+        user_id: str,
+        document: Any,
+        caption: str,
+        message_id: int | None,
+    ) -> None:
+        """Download a Telegram document and dispatch it as a file-path message.
+
+        The file is saved under work_dir/uploads/<chat_id>/ so the AI can read it
+        with the ReadFile tool. Only text-like and PDF files are accepted; other
+        types get a friendly rejection.
+        """
+        import io
+        import re
+        from pathlib import Path
+
+        ACCEPTED_PREFIXES = ("text/", "application/pdf", "application/json",
+                             "application/xml", "application/x-yaml",
+                             "application/x-sh", "application/x-python")
+
+        mime = (document.mime_type or "application/octet-stream").lower()
+        if not any(mime.startswith(p) for p in ACCEPTED_PREFIXES):
+            await self.send_message(
+                chat_id,
+                f"⚠️ 不支持的文件类型：{mime}\n"
+                "支持：文本文件、PDF、JSON、XML、YAML、代码文件等。",
+            )
+            return
+
+        try:
+            assert self._bot is not None
+            # Sanitise filename
+            raw_name = document.file_name or f"file_{document.file_unique_id}"
+            safe_name = re.sub(r"[^\w.\-]", "_", raw_name)[:200]
+
+            uploads_dir = (
+                Path(self._im_config.work_dir).expanduser().resolve()
+                / "sessions" / chat_id / "uploads"
+            )
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            dest = uploads_dir / safe_name
+            # Avoid clobbering existing files by appending a suffix
+            if dest.exists():
+                stem, suffix = dest.stem, dest.suffix
+                dest = uploads_dir / f"{stem}_{document.file_unique_id}{suffix}"
+
+            file = await self._bot.get_file(document.file_id)
+            buf = io.BytesIO()
+            await self._bot.download_file(file.file_path or "", buf)
+            dest.write_bytes(buf.getvalue())
+
+            text_parts = [f"[用户发送了文件: {dest}]"]
+            if caption:
+                text_parts.append(caption)
+            text_parts.append("你可以使用 ReadFile 工具读取该文件。")
+            await self._dispatch_message(chat_id, user_id, "\n".join(text_parts), message_id)
+        except Exception:
+            logger.exception("Error dispatching Telegram document")
+            await self.send_message(chat_id, "[文件下载失败]")
 
     async def _dispatch_photo(self, chat_id: str, user_id: str, file_id: str, caption: str) -> None:
         """Download a Telegram photo and dispatch it as a multimodal message."""

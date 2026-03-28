@@ -125,6 +125,8 @@ class IMSession:
         self._last_status: StatusUpdate | None = None
         # Timestamp of last user activity (for idle eviction)
         self._last_activity: float = time.monotonic()
+        # Per-session model override (set via /model command)
+        self._model_override: str | None = None
 
     async def handle_message(self, text: UserInput, *, message_id: int | None = None) -> None:
         """Called when the user sends a message.
@@ -168,6 +170,13 @@ class IMSession:
                 )
 
         task.add_done_callback(_on_done)
+
+    async def switch_model(self, model_name: str) -> None:
+        """Switch the model for this session. Takes effect on the next turn."""
+        self._model_override = model_name
+        # Discard current kimi instance so it's recreated with the new model
+        self._kimi = None
+        await self._send(f"✅ 模型已切换为 `{model_name}`，下次对话生效。")
 
     async def cancel_current_turn(self) -> None:
         """Cancel the currently running turn, if any."""
@@ -265,11 +274,37 @@ class IMSession:
                 session.state.approval.auto_approve_actions -= _MODE_ACTIONS
             session.save_state()
 
+            # Per-session PERSONA.md: inject into ${ROLE_ADDITIONAL} slot.
+            # Only affects new sessions (existing sessions use stored system prompt).
+            agent_file: Path | None = None
+            persona_path = work_dir_path / "PERSONA.md"
+            if persona_path.exists():
+                persona_content = persona_path.read_text(encoding="utf-8").strip()
+                if persona_content:
+                    import yaml  # bundled with kimi-cli deps
+
+                    agent_yaml_path = work_dir_path / "_agent.yaml"
+                    agent_yaml_path.write_text(
+                        yaml.dump(
+                            {
+                                "version": 1,
+                                "agent": {
+                                    "extend": "default",
+                                    "system_prompt_args": {"ROLE_ADDITIONAL": persona_content},
+                                },
+                            },
+                            allow_unicode=True,
+                        ),
+                        encoding="utf-8",
+                    )
+                    agent_file = agent_yaml_path
+
             self._kimi = await KimiCLI.create(
                 session,
                 config=self._config,
-                model_name=self._im_config.model_name,
+                model_name=self._model_override or self._im_config.model_name,
                 yolo=yolo,
+                agent_file=agent_file,
             )
         return self._kimi
 
