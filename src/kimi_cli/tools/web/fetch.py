@@ -31,6 +31,10 @@ class FetchURL(CallableTool2[Params]):
 
     @override
     async def __call__(self, params: Params) -> ToolReturnValue:
+        # Auto-prepend http:// if the URL has no scheme so bare hosts like
+        # "myip.ipip.net" don't cause aiohttp to raise InvalidURL.
+        if not params.url.startswith(("http://", "https://")):
+            params = params.model_copy(update={"url": "http://" + params.url})
         if self._service_config:
             ret = await self._fetch_with_service(params)
             if not ret.is_error:
