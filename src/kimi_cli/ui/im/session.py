@@ -17,8 +17,12 @@ from kimi_cli.ui.im.masking import mask_output_conditional
 from kimi_cli.utils.logging import logger
 from kimi_cli.wire.types import (
     ApprovalRequest,
+    CompactionEnd,
     ContentPart,
+    Notification,
+    PlanDisplay,
     QuestionRequest,
+    StatusUpdate,
     ToolCallRequest,
     TurnEnd,
 )
@@ -117,6 +121,12 @@ class IMSession:
         self._stream_msg_id: int | None = None
         self._stream_last_edit: float = 0.0
         self._stream_edit_interval: float = 0.5  # seconds between edits
+        # Latest status snapshot (context tokens, usage, plan_mode, etc.)
+        self._last_status: StatusUpdate | None = None
+        # Timestamp of last user activity (for idle eviction)
+        self._last_activity: float = time.monotonic()
+        # Per-session model override (set via /model command)
+        self._model_override: str | None = None
 
     async def handle_message(self, text: UserInput, *, message_id: int | None = None) -> None:
         """Called when the user sends a message.
@@ -127,6 +137,7 @@ class IMSession:
         """
         # Enqueue and schedule BEFORE any await — keeps the check atomic in asyncio
         self._message_queue.put_nowait(text)
+        self._last_activity = time.monotonic()
         if not self._turn_running:
             self._schedule_next_turn()
 
@@ -159,6 +170,18 @@ class IMSession:
                 )
 
         task.add_done_callback(_on_done)
+
+    async def switch_model(self, model_name: str) -> None:
+        """Switch the model for this session. Takes effect on the next turn."""
+        available = list(self._config.models.keys())
+        if model_name not in self._config.models:
+            hint = "\n可用模型：\n" + "\n".join(f"  • {m}" for m in sorted(available)) if available else ""
+            await self._send(f"❌ 模型 `{model_name}` 不存在。{hint}")
+            return
+        self._model_override = model_name
+        # Discard current kimi instance so it's recreated with the new model
+        self._kimi = None
+        await self._send(f"✅ 已切换为 `{model_name}`，下次对话生效。")
 
     async def cancel_current_turn(self) -> None:
         """Cancel the currently running turn, if any."""
@@ -256,11 +279,37 @@ class IMSession:
                 session.state.approval.auto_approve_actions -= _MODE_ACTIONS
             session.save_state()
 
+            # Per-session PERSONA.md: inject into ${ROLE_ADDITIONAL} slot.
+            # Only affects new sessions (existing sessions use stored system prompt).
+            agent_file: Path | None = None
+            persona_path = work_dir_path / "PERSONA.md"
+            if persona_path.exists():
+                persona_content = persona_path.read_text(encoding="utf-8").strip()
+                if persona_content:
+                    import yaml  # bundled with kimi-cli deps
+
+                    agent_yaml_path = work_dir_path / "_agent.yaml"
+                    agent_yaml_path.write_text(
+                        yaml.dump(
+                            {
+                                "version": 1,
+                                "agent": {
+                                    "extend": "default",
+                                    "system_prompt_args": {"ROLE_ADDITIONAL": persona_content},
+                                },
+                            },
+                            allow_unicode=True,
+                        ),
+                        encoding="utf-8",
+                    )
+                    agent_file = agent_yaml_path
+
             self._kimi = await KimiCLI.create(
                 session,
                 config=self._config,
-                model_name=self._im_config.model_name,
+                model_name=self._model_override or self._im_config.model_name,
                 yolo=yolo,
+                agent_file=agent_file,
             )
         return self._kimi
 
@@ -371,6 +420,49 @@ class IMSession:
                                 f"{self._im_config.loop_detection_threshold} 次，已自动停止。"
                             )
                             cancel_event.set()
+
+                    case StatusUpdate() as status:
+                        # Merge into running snapshot; fields that are None mean "no change"
+                        if self._last_status is None:
+                            self._last_status = status
+                        else:
+                            merged = self._last_status.model_dump()
+                            for k, v in status.model_dump().items():
+                                if v is not None:
+                                    merged[k] = v
+                            self._last_status = StatusUpdate(**merged)
+
+                    case CompactionEnd():
+                        await self._send(
+                            "📦 历史对话已自动压缩（保留最近内容）\n"
+                            "如需完整上下文请用 /clear 开启新对话"
+                        )
+
+                    case PlanDisplay() as plan:
+                        header = f"📋 **Plan** — `{plan.file_path}`"
+                        body = plan.content
+                        # Keep plan message separate from the streaming buffer
+                        if self._stream_msg_id is not None and text_buffer:
+                            full = mask_output_conditional(
+                                "".join(text_buffer),
+                                enabled=self._im_config.output_masking_enabled,
+                            )
+                            await self._update_stream(full, force=True)
+                            self._stream_msg_id = None
+                            text_buffer.clear()
+                        for chunk in _split_message(f"{header}\n\n{body}"):
+                            await self._send(chunk)
+
+                    case Notification() as notif:
+                        severity_prefix = {
+                            "error": "🔴",
+                            "warning": "🟡",
+                            "info": "🔵",
+                        }.get(notif.severity, "ℹ️")
+                        msg_text = f"{severity_prefix} **{notif.title}**"
+                        if notif.body:
+                            msg_text += f"\n{notif.body}"
+                        await self._send(msg_text)
 
                     case _:
                         pass
@@ -563,6 +655,8 @@ class IMSession:
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
+            from kimi_cli.utils.subprocess_env import get_noninteractive_env
+
             if sys.platform == "win32":
                 ps_command = f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
                 args = ["powershell.exe", "-command", ps_command]
@@ -573,6 +667,7 @@ class IMSession:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 cwd=str(work_dir),
+                env=get_noninteractive_env(),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
             output = stdout.decode("utf-8", errors="replace").strip()

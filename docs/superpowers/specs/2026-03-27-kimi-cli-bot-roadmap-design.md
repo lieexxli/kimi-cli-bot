@@ -1,7 +1,7 @@
 # kimi-cli-bot 产品与开发规划
 
 **日期**: 2026-03-27
-**更新**: 2026-03-27（Phase 0+1 完成）
+**更新**: 2026-03-28（Phase 0+1+2a 完成）
 **项目**: kimi-cli-bot（kimi-cli Telegram Bot 扩展）
 **参考项目**: OpenClaw、Codex、Gemini CLI、Claude Code（anthropics/claude-plugins-official/telegram）
 
@@ -37,6 +37,29 @@ Phase 0（适配器接口改造）和 Phase 1（体验基线）已全部完成�
 - **新增 `!` shell 直通**：让用户可以不经过 AI 直接执行命令，与 CLI 的 `!` 行为一致
 - **`suggest` 模式 session state 修复**：`auto` 模式写入 `auto_approve_actions` 会持久化，切回 `suggest` 需要显式清除
 - **流式输出去掉了"思考中"占位**：第一个 chunk 到达时直接发消息，避免多余的等待提示
+
+---
+
+## Wire 事件对齐记录（2026-03-28）
+
+代码审查发现 Phase 0+1 的 `case _: pass` 遗漏了若干 Wire 事件，导致 IM 与 CLI 体验不对齐。已修复：
+
+| Wire 事件 | 之前 | 修复后 |
+|-----------|------|--------|
+| `CompactionEnd` | 静默丢弃 | 发送 "📦 历史对话已自动压缩" 通知 |
+| `PlanDisplay` | 静默丢弃（`/plan` 命令完全无效） | 发送计划内容到 IM |
+| `Notification` | 静默丢弃（系统通知丢失） | 按 severity 前缀发送给用户 |
+| `StatusUpdate` | 静默丢弃 | 累积存储在 `_last_status`，`/status` 命令可读取 |
+| `/status` 命令 | 仅显示版本/会话数/模型 | 新增上下文 token 用量和 plan 模式状态 |
+
+**未处理（设计决策）**：
+
+| Wire 事件 | 理由 |
+|-----------|------|
+| `SteerInput` | 需要 mid-turn 输入注入架构，IM 消息队列不支持；低优先级 |
+| `MCPLoadingBegin/End` | 瞬态状态，在手机消息流里发送会产生噪音 |
+| `CompactionBegin` | 只发 End 通知已够，Begin 是多余的中间状态 |
+| `SubagentEvent` | 子 agent 的输出会通过主 agent 的 TextPart 汇总，不需要单独展示 |
 
 
 
@@ -106,13 +129,13 @@ kimi-cli-bot 在 MoonshotAI/kimi-cli 基础上添加了 Telegram Bot 适配层�
 | **P1** | 压缩感知通知 | 压缩触发时发系统消息 | Gemini CLI |
 | **P1** | 分页优化 | 按段落边界分割；首页 reply 到原消息形成线程 | Claude Code |
 | **P1** | 安全文档 | README：白名单用户 = 服务器 Shell 权限 | — |
-| **P2** | 文件发送保护 | 等文件发送接口实现后再加；保护 kimi.toml 等路径 | Claude Code |
-| **P2** | 会话超时清理 | 内存 30 分钟 idle 清理；磁盘可配保留天数 | OpenClaw |
-| **P2** | /status token 展示 | 估算上下文使用率、对话轮数 | Gemini CLI |
-| **P2** | 每用户 PERSONA.md | `sessions/<chat_id>/PERSONA.md` 注入 system prompt | Codex |
-| **P2** | 文件附件支持 | PDF、代码文件，依赖 P2 文件发送接口 | — |
-| **P3** | 多模型文档 + /model 命令 | kimi-cli 已支持多模型，补文档 + 命令暴露 | — |
-| **P3** | 预设 Skills | 利用现有 BackgroundTaskManager，定时通知/监控 | Codex |
+| ~~**P2**~~ | ~~文件发送保护~~ | 无文件发送工具，漏洞面不存在，跳过 | Claude Code |
+| **P2** ✅ | 会话超时清理 | 内存 30 分钟 idle 清理（`session_idle_timeout`） | OpenClaw |
+| **P2** ✅ | /status token 展示 | 累积 `StatusUpdate`，`/status` 展示 token 用量 | Gemini CLI |
+| **P2** ✅ | 每用户 PERSONA.md | `sessions/<chat_id>/PERSONA.md` → `${ROLE_ADDITIONAL}`，新 session 生效 | Codex |
+| **P2** ✅ | 文件附件支持 | PDF、文本、代码文件；保存到 uploads/，AI 用 ReadFile 读取 | — |
+| **P3** ✅ | /model 命令 | 管理员专用，切换后下轮生效；kimi 实例重建，历史保留 | — |
+| ~~**P3**~~ | ~~预设 Skills~~ | BackgroundTaskManager 非调度器，无法直接实现定时任务；跳过 | Codex |
 
 ---
 
@@ -241,56 +264,26 @@ soul 层的 `/clear /yolo /compact` 用户直接发消息触发，无需重复�
 
 ---
 
-### Phase 2：安全加固（~1 周）
+### Phase 2：安全加固（已完成 2026-03-28，部分跳过）
 
-#### 2.1 速率限制
+#### 2.1 速率限制（跳过）
 
-```python
-# src/kimi_cli/ui/im/rate_limiter.py
-class RateLimiter:
-    def __init__(self, rpm: int):
-        self._rpm = rpm
-        self._timestamps: dict[str, deque[float]] = defaultdict(deque)
+IM 入口消息频率天然受限，不需要 RPM 限制。
 
-    def is_allowed(self, chat_id: str) -> bool:
-        now = time.monotonic()
-        dq = self._timestamps[chat_id]
-        while dq and now - dq[0] > 60:
-            dq.popleft()
-        if len(dq) >= self._rpm:
-            return False
-        dq.append(now)
-        return True
-```
+#### 2.2 Prompt Injection 防护（跳过）
 
-超限时回复友好提示，管理员豁免。配置：`[im.rate_limit] rpm = 20`
+原设计依赖 `KIMI_DENY_PATHS` 环境变量，代码审查确认 kimi-cli 中不存在该机制，无法实现。路径黑名单需要 kimi-cli 底层支持。
 
-#### 2.2 Prompt Injection 防护（capability guard，非文本过滤）
+#### 2.3 压缩感知通知 ✅
 
-**设计原则**：保护点在能力层，不是文本分类层。通过关键词匹配消息内容来决策会误伤正常讨论，且容易被绕过。
+`case CompactionEnd()` 处理，发送"📦 历史对话已自动压缩"通知。
 
-正确做法：**敏感能力压根不向 Telegram 触发的 Agent 暴露**：
+#### 2.4 分页优化 ✅
 
-- `kimi.toml` 及其所在目录加入 kimi-cli 的文件操作黑名单（`KIMI_DENY_PATHS` 环境变量或配置项），Agent 无法读取
-- 白名单修改（`im_allow`）只能通过重启 Bot + 修改配置文件实现，不存在运行时修改接口
-- `/yolo` 等 soul 层命令保持可用（它们改变的是 session 内状态，不是持久化配置）
+`split_message()` 升级为段落优先分割（`\n\n` 边界），多页标注 `(1/N)` 页码。
+首页 reply_to 暂未实现（需改 `IMAdapter.send_message` 接口，影响面较大，推迟）。
 
-#### 2.3 压缩感知通知
-
-监听 kimi-cli 压缩事件（在 `_run_turn` 中检测 `StatusUpdate` 中上下文使用率骤降），触发时发送：
-
-```
-📦 历史对话已自动压缩（保留最近内容）
-如需完整上下文请用 /clear 开启新对话
-```
-
-#### 2.4 分页优化
-
-- 超 4096 字符时优先在 `\n\n` 处分割（`chunkMode=newline`），而非硬截断
-- 第一页 reply 到原始消息形成线程（`replyToMode=first`），后续页独立发送
-- 页码标注：`(1/3)`
-
-#### 2.5 安全文档
+#### 2.5 安全文档 ✅
 
 README 增加"安全说明"：
 
@@ -307,17 +300,19 @@ README 增加"安全说明"：
 
 ---
 
-### Phase 3：会话治理（~1 周）
+### Phase 3：会话治理（已完成 2026-03-28）
 
-#### 3.1 内存清理
+#### 3.1 内存清理 ✅
 
-`IMSession` 30 分钟无活动后从 `IMServer._sessions` 移除，重新收到消息时从文件重载。
+`IMSession` idle 超时后从 `IMServer._sessions` 移除，下次收到消息时从磁盘重载。
+- 配置：`[im] session_idle_timeout = 1800`（秒，0 = 禁用）
+- `IMServer._idle_cleanup_loop()` 每分钟扫描一次
+- `IMSession._last_activity` 在 `handle_message` 时更新
 
-#### 3.2 磁盘清理
+#### 3.2 磁盘清理（未做，推迟）
 
-- 可配置保留天数（默认 30 天）
-- `context.json` 超 10MB 触发 kimi-cli 原有 compaction
-- `asyncio.Queue()` 设容量上限（默认 100），超限回复"繁忙，请稍后重试"
+- 可配置保留天数：kimi-cli 的 compaction 机制已在 context 超阈值时自动触发，**文件大小触发**无入口，跳过
+- 历史 session 目录定期清理：低优先级，暂不实现
 
 ---
 
@@ -333,17 +328,20 @@ README 增加"安全说明"：
 └─ 上次压缩：2 小时前
 ```
 
-#### 4.2 每用户 PERSONA.md
+#### 4.2 每用户 PERSONA.md ✅（2026-03-28）
 
-`sessions/<chat_id>/PERSONA.md` 在会话初始化时注入 system prompt。
+`sessions/<chat_id>/PERSONA.md` → 生成 `_agent.yaml`（`extend: default` + `ROLE_ADDITIONAL`）→ 传给 `KimiCLI.create(agent_file=...)`。
+**注意**：只对新 session 生效（首次初始化时写入系统提示）；已有 session 需 `/clear` 后生效。
 
-#### 4.3 文件附件 + 文件发送保护
+#### 4.3 文件附件 ✅（2026-03-28）
 
-先实现文件附件接收（PDF/TXT/代码，< 20MB），同步加入 `assertSendable()` 保护：拒绝发送 kimi.toml、session 目录、`.env` 等路径下的文件。两个功能同一个 Phase 实现，避免先开洞后堵。
+接收 `message.document`：下载保存到 `sessions/<chat_id>/uploads/<filename>`，发给 AI 一条包含文件路径的指令，AI 用 `ReadFile` 工具读取。
+支持类型：文本、PDF、JSON、XML、YAML、代码文件；其余类型回复不支持提示。
+文件发送保护：无文件发送接口，漏洞面不存在，跳过。
 
-#### 4.4 Markdown 格式化
+#### 4.4 Markdown 格式化（未做）
 
-代码块用 `parse_mode=MarkdownV2`，Shell 输出等宽字体显示。
+`parse_mode=MarkdownV2` 需要对所有文本做转义，容易产生解析错误。低优先级，暂不实现。
 
 ---
 

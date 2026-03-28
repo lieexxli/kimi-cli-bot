@@ -234,6 +234,16 @@ class IMConfig(BaseModel):
         ),
     )
     """When set, prepends '[请用<language>回复]' to every user message sent to the AI."""
+    session_idle_timeout: int = Field(
+        default=1800,
+        ge=0,
+        description=(
+            "Seconds of inactivity after which an in-memory session is evicted. "
+            "The session persists on disk and resumes automatically on next message. "
+            "0 disables eviction."
+        ),
+    )
+    """Idle eviction timeout in seconds. Default 30 minutes (1800)."""
 
 
 class Config(BaseModel):
