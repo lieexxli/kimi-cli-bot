@@ -160,7 +160,9 @@ class LocalKaos:
         local_path = path.unsafe_to_local_path() if isinstance(path, KaosPath) else Path(path)
         await asyncio.to_thread(local_path.mkdir, parents=parents, exist_ok=exist_ok)
 
-    async def exec(self, *args: str, env: Mapping[str, str] | None = None) -> KaosProcess:
+    async def exec(
+        self, *args: str, env: Mapping[str, str] | None = None, cwd: str | None = None
+    ) -> KaosProcess:
         if not args:
             raise ValueError("At least one argument (the program to execute) is required.")
 
@@ -170,6 +172,7 @@ class LocalKaos:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            cwd=cwd,
         )
         return self.Process(process)
 
